@@ -6,8 +6,10 @@ declare(strict_types=1);
 
 namespace Seatsyoo\Tests;
 
+use Seatsyoo\Http\CurlTransport;
 use Seatsyoo\Http\Requester;
 use Seatsyoo\Http\Response;
+use Seatsyoo\Http\StreamTransport;
 use Seatsyoo\Http\Transport;
 use Seatsyoo\Http\TransportException;
 use Seatsyoo\Resources\Charts;
@@ -64,6 +66,48 @@ final class TransporteFalso implements Transport
     {
         return (string) substr($this->ultima()['url'], strlen(Entorno::SERVIDOR));
     }
+}
+
+/**
+ * Transporte de verdad que pierde la respuesta del primer intento de un método: la petición llega al servidor
+ * y se hace, pero el cliente recibe un plazo agotado (como cuando un proxy corta), así que la repite.
+ */
+final class TransporteQuePierde implements Transport
+{
+    /** @var list<string> Lo que respondió el servidor a cada petición, perdidas incluidas («MÉTODO estado»). */
+    public array $respuestas = [];
+    private bool $perdida = false;
+
+    public function __construct(private Transport $real, private string $metodo)
+    {
+    }
+
+    public function send(string $method, string $url, array $headers, ?string $body, float $timeout): Response
+    {
+        $respuesta = $this->real->send($method, $url, $headers, $body, $timeout);
+        $this->respuestas[] = $method . ' ' . $respuesta->status;
+        if ($method === $this->metodo && !$this->perdida) {
+            $this->perdida = true;
+            throw new TransportException('Operation timed out (respuesta perdida a propósito)', true);
+        }
+
+        return $respuesta;
+    }
+}
+
+/**
+ * Los transportes de este PHP, para probar con cada uno: curl (si está) y los flujos de PHP.
+ *
+ * @return array<string, callable(): Transport>
+ */
+function transportes(): array
+{
+    $lista = ['flujos de PHP' => static fn (): Transport => new StreamTransport()];
+    if (extension_loaded('curl')) {
+        $lista = ['curl' => static fn (): Transport => new CurlTransport()] + $lista;
+    }
+
+    return $lista;
 }
 
 /**

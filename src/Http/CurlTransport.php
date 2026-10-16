@@ -35,6 +35,9 @@ final class CurlTransport implements Transport
             CURLOPT_HTTPHEADER => $lines,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false,
+            // La ruta tal cual: sin esto, curl quita «/.» y «/..» aunque vayan codificados (%2E), y una clave «.»
+            // o «..» acabaría en otra ruta.
+            CURLOPT_PATH_AS_IS => true,
             CURLOPT_TIMEOUT_MS => $milliseconds,
             CURLOPT_CONNECTTIMEOUT_MS => min($milliseconds, 10000),
             // Necesario para plazos de menos de un segundo en algunos sistemas.

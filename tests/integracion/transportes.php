@@ -8,22 +8,9 @@ namespace Seatsyoo\Tests;
 
 use Seatsyoo\Client;
 use Seatsyoo\Http\CurlTransport;
-use Seatsyoo\Http\StreamTransport;
-use Seatsyoo\Http\Transport;
 use Seatsyoo\SeatsyooException;
 
 grupo('Integración: transportes');
-
-/** @return array<string, callable(): Transport> */
-function transportes(): array
-{
-    $lista = ['flujos de PHP' => static fn (): Transport => new StreamTransport()];
-    if (extension_loaded('curl')) {
-        $lista = ['curl' => static fn (): Transport => new CurlTransport()] + $lista;
-    }
-
-    return $lista;
-}
 
 prueba('el cliente usa curl si está', function (): void {
     if (!extension_loaded('curl')) {
@@ -82,6 +69,22 @@ foreach (transportes() as $nombre => $crear) {
         contiene('0,4 s', $error->getMessage());
         entre(0.3, 1.9, microtime(true) - $inicio, 'corta a tiempo');
         $lento->parar();
+    });
+
+    prueba("$nombre: el plazo es de la petición entera, aunque el cuerpo llegue a goteo", function () use ($crear): void {
+        // Un byte cada 0,3 s durante 3 s: cada lectura llega a tiempo, pero la respuesta entera no.
+        $goteo = new ServidorLocal(__DIR__ . '/../receptor.php', ['SEATSYOO_GOTEO_MS' => '300', 'SEATSYOO_GOTEO_VECES' => '10']);
+        $seatsyoo = new Client(secretKey: 'sk_x', server: $goteo->url . '/goteo', timeout: 1.0, maxRetries: 0, transport: $crear());
+        $inicio = microtime(true);
+        $error = lanza(SeatsyooException::class, fn () => $seatsyoo->workspace->retrieve());
+        igual('timeout', $error->getErrorCode());
+        entre(0.8, 2.0, microtime(true) - $inicio, 'corta al segundo, sin esperar al final del goteo');
+        $goteo->parar();
+        // Con plazo de sobra, el goteo llega entero.
+        $goteo = new ServidorLocal(__DIR__ . '/../receptor.php', ['SEATSYOO_GOTEO_MS' => '100', 'SEATSYOO_GOTEO_VECES' => '5']);
+        $seatsyoo = new Client(secretKey: 'sk_x', server: $goteo->url . '/goteo', timeout: 5.0, maxRetries: 0, transport: $crear());
+        igual(['goteo' => 'xxxxx'], $seatsyoo->workspace->retrieve());
+        $goteo->parar();
     });
 
     prueba("$nombre: error de red contra un puerto cerrado", function () use ($crear): void {

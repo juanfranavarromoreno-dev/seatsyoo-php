@@ -53,13 +53,14 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Borra la temporada; sus eventos, con sus ventas, siguen ahí.
+     * Borra la temporada; sus eventos, con sus ventas, siguen ahí. Se reintenta solo, como Events::delete():
+     * si hubo que repetirlo, "retried" => true, y el 404 de un reintento (ya estaba borrada) responde ok.
      *
-     * @return array{ok: bool}
+     * @return array{ok: bool, retried?: true}
      */
     public function delete(string $season): array
     {
-        return $this->http->json('DELETE', $this->path($season));
+        return $this->http->delete($this->path($season));
     }
 
     /**
@@ -80,7 +81,8 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Quita un evento de la temporada (el evento sigue existiendo).
+     * Quita un evento de la temporada (el evento sigue existiendo). Repetirlo no da error: responde la
+     * temporada igual.
      *
      * @return array<string, mixed> La temporada.
      */
@@ -129,13 +131,15 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Reserva en todos los eventos de la temporada. Con $orderId es idempotente y se reintenta sola.
+     * Reserva en todos los eventos de la temporada. Con $orderId es idempotente y se reintenta sola; como en
+     * Events::book(), tras un reintento la respuesta lleva "retried" => true y, si el intento que se cortó ya
+     * había reservado, "objects" son las claves pedidas y "seq" 0. El número de pedido no puede ser ''.
      *
      * @param list<string|array{key: string, quantity?: int}> $objects
      * @param list<string>|null                               $channelKeys
      * @param list<string>|null                               $events
      *
-     * @return array{objects: list<string>, seq: int, events: int}
+     * @return array{objects: list<string>, seq: int, events: int, retried?: true}
      */
     public function book(
         string $season,
@@ -146,14 +150,16 @@ class Seasons extends ApiResource
         ?bool $ignoreChannels = null,
         ?array $events = null
     ): array {
-        return $this->http->json('POST', $this->action($season, 'book'), self::fields([
+        $result = $this->http->json('POST', $this->action($season, 'book'), self::fields([
             'objects' => self::objects($objects),
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
             'channelKeys' => $channelKeys,
             'ignoreChannels' => $ignoreChannels,
             'events' => $events,
-        ]), [], $orderId !== null);
+        ]), [], $orderId !== null, $retried);
+
+        return self::afterRetry($result, $retried, $objects);
     }
 
     /**
@@ -173,20 +179,23 @@ class Seasons extends ApiResource
 
     /**
      * Devuelve un abono: lo vendido con ese pedido en todos los eventos, entero o solo esos objetos. La
-     * devolución entera se reintenta sola; la parcial, no.
+     * devolución entera se reintenta sola (tras un reintento, "retried" => true, como en Events::refund());
+     * la parcial, no.
      *
      * @param list<string|array{key: string, quantity?: int}>|null $objects
      * @param list<string>|null                                    $events
      *
-     * @return array{objects: list<string>, seq: int, events: int}
+     * @return array{objects: list<string>, seq: int, events: int, retried?: true}
      */
     public function refund(string $season, string $orderId, ?array $objects = null, ?array $events = null): array
     {
-        return $this->http->json('POST', $this->action($season, 'release'), self::fields([
-            'orderId' => $orderId,
+        $result = $this->http->json('POST', $this->action($season, 'release'), self::fields([
+            'orderId' => self::orderId($orderId),
             'objects' => $objects === null ? null : self::objects($objects),
             'events' => $events,
-        ]), [], $objects === null);
+        ]), [], $objects === null, $retried);
+
+        return self::afterRetry($result, $retried);
     }
 
     /**
@@ -207,7 +216,7 @@ class Seasons extends ApiResource
             'objects' => self::objects($objects),
             'status' => $status,
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
             'events' => $events,
         ]));
     }
@@ -236,7 +245,7 @@ class Seasons extends ApiResource
             'accessible' => $accessible,
             'allowSplit' => $allowSplit,
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
             'channelKeys' => $channelKeys,
             'events' => $events,
         ]));

@@ -52,6 +52,7 @@ prueba('ejemplo/compra.php: retiene, reserva, consulta y devuelve', function ():
     igual(0, $r['codigo'], 'termina bien (' . $r['errores'] . ')');
     igual('', $r['errores']);
     contiene('Retenidas: Platea-C-1, Platea-C-2', $r['salida']);
+    cierto(preg_match('/Reservadas con el pedido pedido-\S+: Platea-C-1, Platea-C-2\n/', $r['salida']) === 1, 'dice lo reservado');
     contiene('Platea-C-1: 1 plaza(s), booked', $r['salida']);
     contiene('Devuelta: Platea-C-2', $r['salida']);
     contiene('Devuelto el resto: Platea-C-1', $r['salida']);

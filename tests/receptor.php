@@ -6,6 +6,8 @@
  * - POST /aviso: recibe un aviso de webhook de verdad, lo verifica con Webhook::verify y apunta en el archivo
  *   SEATSYOO_AVISOS lo que llegó (cuerpo, cabeceras y si la firma era buena). Contesta 200 o 400.
  * - /lento…: tarda SEATSYOO_LENTO_MS milisegundos en contestar (para probar el plazo de los transportes).
+ * - /goteo…: contesta enseguida, pero suelta el cuerpo de byte en byte, uno cada SEATSYOO_GOTEO_MS
+ *   milisegundos, SEATSYOO_GOTEO_VECES veces (para probar que el plazo es el de la petición entera).
  */
 
 declare(strict_types=1);
@@ -21,6 +23,24 @@ if (strncmp($ruta, '/lento', 6) === 0) {
     usleep((int) (getenv('SEATSYOO_LENTO_MS') ?: '3000') * 1000);
     header('Content-Type: application/json');
     echo '{"tarde":true}';
+
+    return;
+}
+
+if (strncmp($ruta, '/goteo', 6) === 0) {
+    header('Content-Type: application/json');
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    echo '{"goteo":"';
+    flush();
+    $veces = (int) (getenv('SEATSYOO_GOTEO_VECES') ?: '10');
+    for ($i = 0; $i < $veces; $i++) {
+        usleep((int) (getenv('SEATSYOO_GOTEO_MS') ?: '300') * 1000);
+        echo 'x';
+        flush();
+    }
+    echo '"}';
 
     return;
 }

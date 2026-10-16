@@ -28,13 +28,14 @@ class Events extends ApiResource
     /**
      * Crea un evento con la versión publicada de un plano.
      *
-     * @param array<string, mixed> $params chartKey (obligatorio), key, name, date, tableModes, categoryOverrides.
+     * @param array<string, mixed> $params chartKey (obligatorio), key, name, date, tableModes, categoryOverrides
+     *                                     (estos dos, mapas «clave => valor»; vacíos, se envían como {}).
      *
      * @return array<string, mixed> El evento.
      */
     public function create(array $params): array
     {
-        return $this->http->json('POST', '/events', $params);
+        return $this->http->json('POST', '/events', self::maps($params, ['tableModes', 'categoryOverrides']));
     }
 
     /** @return array<string, mixed> El evento. */
@@ -45,7 +46,8 @@ class Events extends ApiResource
 
     /**
      * Cambia un evento: key, name, date (null la quita), tableModes, tableModesChanges, categoryOverrides,
-     * categoryOverridesChanges o pricing (null quita los precios).
+     * categoryOverridesChanges o pricing (null quita los precios). Los mapas «clave => valor» vacíos (también
+     * pricing.categories y pricing.channels) se envían como {}.
      *
      * @param array<string, mixed> $changes
      *
@@ -53,6 +55,15 @@ class Events extends ApiResource
      */
     public function update(string $event, array $changes): array
     {
+        $changes = self::maps($changes, ['tableModes', 'tableModesChanges', 'categoryOverrides', 'categoryOverridesChanges']);
+        if (isset($changes['pricing']) && is_array($changes['pricing'])) {
+            $pricing = self::maps($changes['pricing'], ['categories', 'channels']);
+            if (isset($pricing['channels']) && is_array($pricing['channels'])) {
+                $pricing['channels'] = self::maps($pricing['channels'], array_map('strval', array_keys($pricing['channels'])));
+            }
+            $changes['pricing'] = $pricing;
+        }
+
         return $this->http->json('PATCH', '/events/' . self::key($event), $changes);
     }
 
@@ -60,11 +71,14 @@ class Events extends ApiResource
      * Borra un evento con sus retenciones. Si tiene algo vendido da 409 event-has-sales, salvo con $force,
      * que lo borra con sus ventas y su historial.
      *
-     * @return array{ok: bool}
+     * Se reintenta solo. Si hubo que repetirlo, la respuesta lleva "retried" => true; y si el reintento da 404
+     * (el intento cuya respuesta se perdió ya lo había borrado), no lanza: responde ok.
+     *
+     * @return array{ok: bool, retried?: true}
      */
     public function delete(string $event, bool $force = false): array
     {
-        return $this->http->json('DELETE', '/events/' . self::key($event), null, ['force' => $force ? '1' : null]);
+        return $this->http->delete('/events/' . self::key($event), ['force' => $force ? '1' : null]);
     }
 
     /**
@@ -90,12 +104,18 @@ class Events extends ApiResource
      * Reserva (vende) objetos: los retenidos con el token y también los libres.
      *
      * Con $orderId la reserva es idempotente: repetirla con el mismo pedido responde sin cambios (aunque el
-     * token haya caducado), así que el cliente la reintenta sola si se corta. Sin pedido no se reintenta.
+     * token haya caducado), así que el cliente la reintenta sola si se corta. Sin pedido no se reintenta. El
+     * número de pedido no puede ser '' (InvalidArgumentException).
+     *
+     * Si hubo que repetirla, la respuesta lleva "retried" => true. Cuando el intento que se cortó ya había
+     * reservado, el servidor responde al reintento «sin cambios»; aun así, "objects" trae las claves pedidas
+     * (están reservadas con ese pedido) y "seq" es 0, porque el número del cambio no se sabe. Para el detalle,
+     * retrieveOrder().
      *
      * @param list<string|array{key: string, quantity?: int}> $objects
      * @param list<string>|null                               $channelKeys
      *
-     * @return array{objects: list<string>, seq: int}
+     * @return array{objects: list<string>, seq: int, retried?: true}
      */
     public function book(
         string $event,
@@ -105,13 +125,15 @@ class Events extends ApiResource
         ?array $channelKeys = null,
         ?bool $ignoreChannels = null
     ): array {
-        return $this->http->json('POST', $this->action($event, 'book'), self::fields([
+        $result = $this->http->json('POST', $this->action($event, 'book'), self::fields([
             'objects' => self::objects($objects),
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
             'channelKeys' => $channelKeys,
             'ignoreChannels' => $ignoreChannels,
-        ]), [], $orderId !== null);
+        ]), [], $orderId !== null, $retried);
+
+        return self::afterRetry($result, $retried, $objects);
     }
 
     /**
@@ -138,16 +160,22 @@ class Events extends ApiResource
      * La devolución entera se reintenta sola si se corta; la parcial no (repetirla devolvería otra vez): si no
      * sabes si llegó, mira antes qué queda con retrieveOrder().
      *
+     * Si hubo que repetir la devolución entera, la respuesta lleva "retried" => true. Con "objects" vacío, la
+     * devolución ya la había hecho el intento que se cortó (o el pedido ya estaba vacío): el pedido no tiene
+     * nada, pero qué se devolvió no se sabe por esta respuesta (míralo en statusChanges() o en tus datos).
+     *
      * @param list<string|array{key: string, quantity?: int}>|null $objects
      *
-     * @return array{objects: list<string>, seq: int}
+     * @return array{objects: list<string>, seq: int, retried?: true}
      */
     public function refund(string $event, string $orderId, ?array $objects = null): array
     {
-        return $this->http->json('POST', $this->action($event, 'release'), self::fields([
-            'orderId' => $orderId,
+        $result = $this->http->json('POST', $this->action($event, 'release'), self::fields([
+            'orderId' => self::orderId($orderId),
             'objects' => $objects === null ? null : self::objects($objects),
-        ]), [], $objects === null);
+        ]), [], $objects === null, $retried);
+
+        return self::afterRetry($result, $retried);
     }
 
     /**
@@ -164,7 +192,7 @@ class Events extends ApiResource
             'objects' => self::objects($objects),
             'status' => $status,
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
         ]));
     }
 
@@ -195,7 +223,7 @@ class Events extends ApiResource
             'accessible' => $accessible,
             'allowSplit' => $allowSplit,
             'holdToken' => $holdToken,
-            'orderId' => $orderId,
+            'orderId' => self::orderId($orderId),
             'channelKeys' => $channelKeys,
         ]));
     }

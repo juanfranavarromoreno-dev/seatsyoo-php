@@ -146,6 +146,18 @@ prueba('null explícito en los cambios se envía (quita la fecha o los precios)'
     igual('{"date":null,"pricing":null,"name":"Función"}', $e->transporte->ultima()['body']);
 });
 
+prueba('los mapas vacíos de un evento van como {} (un array de PHP vacío saldría como [])', function (): void {
+    $e = new Entorno([json(201), json(200), json(200), json(200)]);
+    $e->events->create(['chartKey' => 'teatro', 'key' => 'e1', 'categoryOverrides' => [], 'tableModes' => []]);
+    igual('{"chartKey":"teatro","key":"e1","categoryOverrides":{},"tableModes":{}}', $e->transporte->ultima()['body']);
+    $e->events->update('e1', ['tableModes' => [], 'tableModesChanges' => [], 'categoryOverrides' => [], 'categoryOverridesChanges' => []]);
+    igual('{"tableModes":{},"tableModesChanges":{},"categoryOverrides":{},"categoryOverridesChanges":{}}', $e->transporte->ultima()['body']);
+    $e->events->update('e1', ['pricing' => ['currency' => 'EUR', 'categories' => [], 'channels' => ['taquilla' => [], 'web' => ['platea' => 30]]]]);
+    igual('{"pricing":{"currency":"EUR","categories":{},"channels":{"taquilla":{},"web":{"platea":30}}}}', $e->transporte->ultima()['body']);
+    $e->events->update('e1', ['pricing' => ['currency' => 'EUR', 'categories' => ['platea' => 30], 'channels' => []]]);
+    igual('{"pricing":{"currency":"EUR","categories":{"platea":30},"channels":{}}}', $e->transporte->ultima()['body']);
+});
+
 prueba('sin objetos es un error antes de llamar', function (): void {
     $e = new Entorno([]);
     lanza(\InvalidArgumentException::class, fn () => $e->events->book('hamlet', []));

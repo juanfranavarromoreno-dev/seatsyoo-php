@@ -6,7 +6,11 @@ namespace Seatsyoo\Http;
 
 /**
  * Transporte con los flujos de PHP (fopen sobre http:// y https://), para cuando no está la extensión curl.
- * Para https hace falta la extensión openssl. El plazo cuenta para conectar y para cada lectura.
+ * Para https hace falta la extensión openssl.
+ *
+ * El plazo es el de la petición entera, como en curl: un servidor que suelta el cuerpo poco a poco no lo
+ * alarga. (Lo único que los flujos de PHP no dejan acotar del todo es la espera de las cabeceras: ahí el plazo
+ * cuenta para conectar y para cada línea que se lee.)
  */
 final class StreamTransport implements Transport
 {
@@ -38,11 +42,14 @@ final class StreamTransport implements Transport
             return true;
         });
         $started = microtime(true);
+        $contents = false;
+        $meta = null;
+        $timedOut = false;
         try {
             $stream = fopen($url, 'rb', false, $context);
-            $contents = is_resource($stream) ? stream_get_contents($stream) : false;
-            $meta = is_resource($stream) ? stream_get_meta_data($stream) : null;
             if (is_resource($stream)) {
+                $contents = self::read($stream, $started + $timeout, $timedOut);
+                $meta = stream_get_meta_data($stream);
                 fclose($stream);
             }
         } finally {
@@ -55,7 +62,7 @@ final class StreamTransport implements Transport
             $timedOut = self::looksLikeTimeout($message) || microtime(true) - $started >= $timeout * 0.95;
             throw new TransportException($timedOut ? 'Sin respuesta a tiempo' : $message, $timedOut);
         }
-        if (!empty($meta['timed_out'])) {
+        if ($timedOut || !empty($meta['timed_out'])) {
             throw new TransportException('Sin respuesta a tiempo', true);
         }
         if ($contents === false) {
@@ -84,6 +91,40 @@ final class StreamTransport implements Transport
         }
 
         return new Response($status, $responseHeaders, $contents);
+    }
+
+    /**
+     * Lee el cuerpo entero sin pasar de $deadline: antes de cada lectura, el plazo del flujo es lo que queda.
+     *
+     * @param resource $stream
+     *
+     * @return string|false El cuerpo (o lo leído hasta agotar el plazo, con $timedOut a true), o false si falla.
+     */
+    private static function read($stream, float $deadline, bool &$timedOut)
+    {
+        $contents = '';
+        while (!feof($stream)) {
+            $remaining = $deadline - microtime(true);
+            if ($remaining <= 0) {
+                $timedOut = true;
+
+                return $contents;
+            }
+            $seconds = (int) floor($remaining);
+            stream_set_timeout($stream, $seconds, min(999999, max(1, (int) round(($remaining - $seconds) * 1000000))));
+            $chunk = fread($stream, 65536);
+            if ($chunk === false) {
+                return false;
+            }
+            $contents .= $chunk;
+            if (!empty(stream_get_meta_data($stream)['timed_out'])) {
+                $timedOut = true;
+
+                return $contents;
+            }
+        }
+
+        return $contents;
     }
 
     /** Quita el prefijo «fopen(…): » que PHP pone a sus avisos. */

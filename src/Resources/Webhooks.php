@@ -43,10 +43,15 @@ class Webhooks extends ApiResource
         return $this->http->json('PATCH', $this->path($webhook), $changes);
     }
 
-    /** @return array{ok: bool} */
+    /**
+     * Da de baja un webhook. Se reintenta solo, como Events::delete(): si hubo que repetirlo, "retried" => true,
+     * y el 404 de un reintento (ya estaba dado de baja) responde ok.
+     *
+     * @return array{ok: bool, retried?: true}
+     */
     public function delete(string $webhook): array
     {
-        return $this->http->json('DELETE', $this->path($webhook));
+        return $this->http->delete($this->path($webhook));
     }
 
     /**

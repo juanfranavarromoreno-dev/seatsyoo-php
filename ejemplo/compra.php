@@ -53,9 +53,10 @@ $seatsyoo->holdTokens->extend($token, seconds: 600);
 // 2. Cobra con tu pasarela de pago…
 
 // 3. Reserva con el número de pedido. Si la petición se corta, el SDK la repite sola: con el mismo pedido,
-//    lo ya reservado no se vende dos veces.
-$seatsyoo->events->book($evento, $butacas, holdToken: $token, orderId: $pedido);
-echo "Reservadas con el pedido $pedido\n";
+//    lo ya reservado no se vende dos veces. Tras un reintento, $reserva['retried'] es true y
+//    $reserva['objects'] sigue trayendo lo reservado.
+$reserva = $seatsyoo->events->book($evento, $butacas, holdToken: $token, orderId: $pedido);
+echo 'Reservadas con el pedido ' . $pedido . ': ' . implode(', ', $reserva['objects']) . (empty($reserva['retried']) ? '' : ' (tras repetir la petición)') . "\n";
 
 // 4. El pedido, con el importe de cada plaza si el evento tiene precios.
 foreach ($seatsyoo->events->retrieveOrder($evento, $pedido)['objects'] as $objeto) {

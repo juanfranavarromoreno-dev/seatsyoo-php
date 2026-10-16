@@ -34,8 +34,9 @@ $evento = $seatsyoo->events->retrieve('hamlet-2026-11-20');
 ```
 
 La clave secreta da acceso de administración a tu espacio: úsala solo en tu servidor, nunca en tu web ni en
-tu repositorio. Opciones del cliente: `timeout` (segundos por intento, 30 por defecto), `maxRetries`
-(reintentos, 2 por defecto; 0 para ninguno) y `transport` (ver [Transporte propio](#transporte-propio)).
+tu repositorio. Opciones del cliente: `timeout` (segundos por intento, con el cuerpo entero; 30 por
+defecto), `maxRetries` (reintentos, 2 por defecto; 0 para ninguno) y `transport` (ver
+[Transporte propio](#transporte-propio)).
 
 ## Vender
 
@@ -72,7 +73,8 @@ $seatsyoo->events->refund('hamlet-2026-11-20', 'pedido-2001');
 ```
 
 Las acciones son todo o nada: si un objeto no se puede, no se toca ninguno. Con `orderId`, repetir la
-reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias.
+reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias. El número de
+pedido no puede ser `''` (lanza `InvalidArgumentException`): para «sin pedido», `null`.
 
 Las mejores butacas libres juntas, retenidas con un token o reservadas directamente:
 
@@ -107,6 +109,22 @@ Ante un error de red, un tiempo agotado, un `429` (esperando lo que diga `Retry-
 
 Lo demás (retener, reservar sin pedido, devolver una parte, mejor disponible…) no se reintenta: repetirlo
 podría hacerlo dos veces. La cuota diaria agotada (`429 quota-exceeded`) tampoco.
+
+Un intento cuya respuesta se pierde (un corte, un plazo agotado, un `502` de un proxy) puede haber llegado:
+entonces el servidor contesta al reintento como a una repetición. Para que eso no confunda:
+
+- Si hubo que repetir `book()`, `refund()` o `delete()`, la respuesta lleva `'retried' => true`.
+- Una reserva repetida que vuelve «sin cambios» trae igualmente en `objects` las claves pedidas (están
+  reservadas con ese pedido); `seq` es `0`, porque el número de ese cambio no se sabe.
+- Una devolución entera repetida con `objects` vacío ya estaba hecha: el pedido no tiene nada, pero qué se
+  devolvió no lo dice esta respuesta (míralo en `statusChanges()` o en tus datos).
+- Un borrado (`events`, `seasons` o `webhooks->delete()`) cuyo reintento da `404 not-found` ya estaba hecho:
+  responde `['ok' => true, 'retried' => true]` en lugar de lanzar el 404.
+
+```php
+$r = $seatsyoo->events->book('hamlet-2026-11-20', $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
+// $r['objects']: lo reservado, también tras un reintento; !empty($r['retried']) si hubo que repetirla.
+```
 
 ## Webhooks
 
@@ -193,7 +211,11 @@ $csv = $seatsyoo->request('GET', '/events/hamlet-2026-11-20/report/orders.csv', 
 $seatsyoo->request('POST', '/events/hamlet-2026-11-20/channels', ['name' => 'Taquilla', 'color' => '#e0a526']);
 ```
 
-Aquí las claves de la ruta las codificas tú, con `rawurlencode()`.
+Aquí las claves de la ruta las codificas tú, con `rawurlencode()`. Y un campo que la API espera como objeto
+(`{"clave": valor}`) y está vacío va como `(object) []` o `new \stdClass()`: un array de PHP vacío sale como
+lista (`[]`) y la API responde `400`. (En `events->create()` y `events->update()` el SDK ya lo hace por ti con
+`tableModes`, `categoryOverrides`, sus `…Changes` y los precios.) La respuesta de `request()` va tal cual:
+un `DELETE` repetido puede dar `404` aunque el primer intento borrara.
 
 ## Transporte propio
 
@@ -250,7 +272,12 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   `getErrorCode()` (stable API code, or `network-error` / `timeout`) and `getDetails()`.
 - Retries (network errors, timeouts, 429 honouring `Retry-After` up to 60 s, 502/503/504, exponential backoff
   with jitter) only for requests that are safe to repeat: GET/PUT/DELETE, booking with an `orderId` and
-  refunding a whole order.
+  refunding a whole order. When `book()`, `refund()` or `delete()` had to be repeated, the result carries
+  `'retried' => true`; a repeated booking that comes back unchanged still lists the requested keys in
+  `objects` (with `seq` 0), and a repeated delete answered with `404 not-found` counts as done. An empty
+  `orderId` (`''`) throws `InvalidArgumentException`. `timeout` covers the whole request, body included.
+- Empty JSON objects: `events->create()`/`update()` send empty maps as `{}`; with `request()`, pass
+  `(object) []` for an empty object.
 - `Webhook::verify()` checks the `Seatsyoo-Signature` header (`t=<seconds>,v1=<hex>`, HMAC-SHA256 of
   `"<t>.<raw body>"`), accepts several `v1` values, compares in constant time, rejects anything outside the
   tolerance and returns the decoded event, or throws `Seatsyoo\SignatureVerificationException`.

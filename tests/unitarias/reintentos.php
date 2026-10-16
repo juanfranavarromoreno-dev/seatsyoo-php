@@ -116,7 +116,7 @@ prueba('sin respuesta tras los reintentos: estado 0 y código timeout o network-
 
 prueba('PUT y DELETE se reintentan; PATCH no', function (): void {
     $e = new Entorno([errorApi(503, 'x'), json(200, ['ok' => true])]);
-    igual(['ok' => true], $e->events->delete('hamlet'));
+    igual(['ok' => true, 'retried' => true], $e->events->delete('hamlet'));
     igual(2, $e->peticiones());
     igual('DELETE', $e->transporte->ultima()['method']);
     $e = new Entorno([errorApi(503, 'x'), json(200, ['ok' => true])]);
@@ -146,7 +146,7 @@ prueba('reservar sin número de pedido no se reintenta', function (): void {
 
 prueba('reservar con número de pedido se reintenta con la misma petición', function (): void {
     $e = new Entorno([agotado(), errorApi(503, 'x'), json(200, BIEN)]);
-    igual(BIEN, $e->events->book('hamlet', ['Platea-C-1'], holdToken: 'hold_1', orderId: 'pedido-2001'));
+    igual(BIEN + ['retried' => true], $e->events->book('hamlet', ['Platea-C-1'], holdToken: 'hold_1', orderId: 'pedido-2001'));
     igual(3, $e->peticiones());
     $cuerpos = array_unique(array_column($e->transporte->peticiones, 'body'));
     igual(['{"objects":["Platea-C-1"],"holdToken":"hold_1","orderId":"pedido-2001"}'], array_values($cuerpos));

@@ -48,7 +48,7 @@ class Client
     /**
      * @param string         $secretKey  La clave secreta del espacio (sk_…).
      * @param string         $server     La dirección de Seatsyoo, como https://tu-dominio-de-seatsyoo (sin /api/v1).
-     * @param float          $timeout    Plazo de cada intento, en segundos.
+     * @param float          $timeout    Plazo de cada intento, en segundos: de la petición entera, con el cuerpo.
      * @param int            $maxRetries Reintentos como mucho en las peticiones que es seguro repetir (0 para ninguno).
      * @param Transport|null $transport  Cómo hacer las peticiones; por defecto, curl si está y, si no, los flujos de PHP.
      */
@@ -76,7 +76,11 @@ class Client
 
     /**
      * Cualquier otra ruta de /api/v1 (informes, canales, planos…), con la misma autenticación, errores y
-     * reintentos. Solo se reintentan GET, PUT y DELETE.
+     * reintentos. Solo se reintentan GET, PUT y DELETE; aquí la respuesta va tal cual, así que un DELETE
+     * repetido tras perder la respuesta del primer intento puede dar 404 aunque ese intento sí borrara.
+     *
+     * Un campo que la API espera como objeto ({"clave": valor}) y está vacío ha de ir como (object) [] o
+     * new \stdClass(): un array de PHP vacío sale como lista ([]) y la API responde 400.
      *
      *     $resumen = $seatsyoo->request('GET', '/events/hamlet/report/summary');
      *     $csv = $seatsyoo->request('GET', '/events/hamlet/report/orders.csv', query: ['sep' => ';']);

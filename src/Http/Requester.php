@@ -15,6 +15,10 @@ use Seatsyoo\SeatsyooException;
  * solo las peticiones que es seguro repetir: GET, PUT y DELETE, reservar con número de pedido y devolver un
  * pedido entero. Lo demás no se reintenta, porque repetirlo podría hacer dos veces lo mismo.
  *
+ * Un intento cuya respuesta se pierde puede haber llegado al servidor: entonces el reintento recibe la
+ * respuesta a una repetición («sin cambios», o un 404 si ya se borró). Por eso json() dice, en $retried, si
+ * hubo que repetir la petición, y delete() da por bueno el 404 de un reintento.
+ *
  * @internal Úsalo a través de Seatsyoo\Client.
  */
 final class Requester
@@ -93,7 +97,9 @@ final class Requester
      */
     public function request(string $method, string $path, ?array $body = null, array $query = [], ?bool $retry = null)
     {
-        return self::decode($this->send($method, $path, $body, $query, $retry));
+        $retried = false;
+
+        return self::decode($this->send($method, $path, $body, $query, $retry, $retried));
     }
 
     /**
@@ -101,14 +107,17 @@ final class Requester
      *
      * @param array<string, mixed>|null  $body
      * @param array<string, scalar|null> $query
+     * @param bool|null                  $retried Sale con true si hubo que repetir la petición (también si al
+     *                                            final lanza el error), y con false si bastó un intento.
      *
      * @return array<mixed>
      *
      * @throws SeatsyooException Con código "invalid-response" si la respuesta no es JSON.
      */
-    public function json(string $method, string $path, ?array $body = null, array $query = [], ?bool $retry = null): array
+    public function json(string $method, string $path, ?array $body = null, array $query = [], ?bool $retry = null, ?bool &$retried = null): array
     {
-        $response = $this->send($method, $path, $body, $query, $retry);
+        $retried = false;
+        $response = $this->send($method, $path, $body, $query, $retry, $retried);
         if ($response->body !== '' && !self::isJson($response)) {
             throw new SeatsyooException(
                 sprintf('La respuesta de Seatsyoo no es JSON (%s): revisa la dirección del servidor', $response->header('content-type') ?? 'sin tipo'),
@@ -122,12 +131,39 @@ final class Requester
     }
 
     /**
+     * Un DELETE de los que responden {"ok": true}. Se reintenta como todo DELETE, y si el reintento da
+     * 404 not-found es que el intento cuya respuesta se perdió ya lo había borrado: en lugar de lanzar el 404,
+     * responde {"ok": true, "retried": true}. Siempre que hubo que repetirlo, la respuesta lleva "retried".
+     *
+     * @param array<string, scalar|null> $query
+     *
+     * @return array<mixed>
+     *
+     * @throws SeatsyooException
+     */
+    public function delete(string $path, array $query = []): array
+    {
+        $retried = false;
+        try {
+            $result = $this->json('DELETE', $path, null, $query, true, $retried);
+        } catch (SeatsyooException $e) {
+            if ($retried && $e->getStatus() === 404 && $e->getErrorCode() === 'not-found') {
+                return ['ok' => true, 'retried' => true];
+            }
+            throw $e;
+        }
+
+        return $retried ? $result + ['retried' => true] : $result;
+    }
+
+    /**
      * La petición con sus reintentos: devuelve la respuesta 2xx o lanza el error.
      *
      * @param array<string, mixed>|null  $body
      * @param array<string, scalar|null> $query
+     * @param bool                       $retried Sale con true si hubo más de un intento.
      */
-    private function send(string $method, string $path, ?array $body, array $query, ?bool $retry): Response
+    private function send(string $method, string $path, ?array $body, array $query, ?bool $retry, bool &$retried): Response
     {
         $method = strtoupper($method);
         $url = $this->url($path, $query);
@@ -143,6 +179,7 @@ final class Requester
         $retry = $retry ?? in_array($method, ['GET', 'HEAD', 'PUT', 'DELETE'], true);
 
         for ($attempt = 0; ; $attempt++) {
+            $retried = $attempt > 0;
             $canRetry = $retry && $attempt < $this->maxRetries;
             try {
                 $response = $this->transport->send($method, $url, $headers, $payload, $this->timeout);
