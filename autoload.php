@@ -1,0 +1,19 @@
+<?php
+
+/**
+ * Carga de clases sin Composer: require 'ruta/a/seatsyoo-php/autoload.php';
+ * Con Composer no hace falta: basta con vendor/autoload.php.
+ */
+
+declare(strict_types=1);
+
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'Seatsyoo\\';
+    if (strncmp($class, $prefix, strlen($prefix)) !== 0) {
+        return;
+    }
+    $file = __DIR__ . '/src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+    if (is_file($file)) {
+        require $file;
+    }
+});

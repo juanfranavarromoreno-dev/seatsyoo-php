@@ -1,0 +1,4 @@
+# Lo que no va en el paquete de Composer (las pruebas y su lanzador de pnpm).
+/tests export-ignore
+/package.json export-ignore
+/.gitattributes export-ignore

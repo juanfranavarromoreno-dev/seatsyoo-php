@@ -1,0 +1,22 @@
+{
+  "name": "seatsyoo/seatsyoo-php",
+  "description": "SDK de servidor de Seatsyoo para PHP: eventos, retenciones, reservas con número de pedido, devoluciones, temporadas y verificación de webhooks.",
+  "type": "library",
+  "license": "MIT",
+  "keywords": ["seatsyoo", "asientos", "entradas", "reservas", "seating", "seats", "tickets", "webhooks"],
+  "require": {
+    "php": ">=8.1"
+  },
+  "suggest": {
+    "ext-curl": "Para las peticiones HTTP (sin ella se usan los flujos de PHP)",
+    "ext-openssl": "Para https:// sin la extensión curl"
+  },
+  "autoload": {
+    "psr-4": {
+      "Seatsyoo\\": "src/"
+    }
+  },
+  "scripts": {
+    "test": "php tests/ejecutar.php"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@seatsyoo/php-pruebas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pruebas del SDK de servidor de Seatsyoo para PHP (el paquete de verdad es seatsyoo/seatsyoo-php, de Composer).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning tests/ejecutar.mjs",
+    "typecheck": "node tests/revisar.mjs"
+  }
+}
