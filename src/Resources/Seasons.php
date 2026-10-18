@@ -25,16 +25,17 @@ class Seasons extends ApiResource
     /**
      * Crea una temporada.
      *
-     * @param array<string, mixed> $params name y chartKey (obligatorios), key, eventKeys y pick (abono parcial).
+     * @param array<string, mixed> $params chartKey (obligatorio); name (sin él, «Temporada N» con la clave
+     *                                     «temporada-N»), key, eventKeys y pick (abono parcial).
      *
-     * @return array<string, mixed> La temporada.
+     * @return array<string, mixed> La temporada, con parentKey (la madre si es parcial) y partialSeasons.
      */
     public function create(array $params): array
     {
         return $this->http->json('POST', '/seasons', $params);
     }
 
-    /** @return array<string, mixed> La temporada, con sus eventos ordenados por fecha. */
+    /** @return array<string, mixed> La temporada, con sus eventos por fecha, parentKey y partialSeasons. */
     public function retrieve(string $season): array
     {
         return $this->http->json('GET', $this->path($season));
@@ -45,7 +46,7 @@ class Seasons extends ApiResource
      *
      * @param array<string, mixed> $changes
      *
-     * @return array<string, mixed> La temporada.
+     * @return array<string, mixed> La temporada, con parentKey (la madre si es parcial) y partialSeasons.
      */
     public function update(string $season, array $changes): array
     {
@@ -53,7 +54,7 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Borra la temporada; sus eventos, con sus ventas, siguen ahí. Se reintenta solo, como Events::delete():
+     * Borra la temporada y sus temporadas parciales; sus eventos, con sus ventas, siguen ahí. Se reintenta solo, como Events::delete():
      * si hubo que repetirlo, "retried" => true, y el 404 de un reintento (ya estaba borrada) responde ok.
      *
      * @return array{ok: bool, retried?: true}
@@ -70,7 +71,7 @@ class Seasons extends ApiResource
      * @param list<string>|null              $eventKeys
      * @param list<array<string, mixed>>|null $events
      *
-     * @return array<string, mixed> La temporada.
+     * @return array<string, mixed> La temporada, con parentKey (la madre si es parcial) y partialSeasons.
      */
     public function addEvents(string $season, ?array $eventKeys = null, ?array $events = null): array
     {
@@ -81,10 +82,11 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Quita un evento de la temporada (el evento sigue existiendo). Repetirlo no da error: responde la
+     * Quita un evento de la temporada (el evento sigue existiendo) y, si no es parcial, también de sus
+     * temporadas parciales. Repetirlo no da error: responde la
      * temporada igual.
      *
-     * @return array<string, mixed> La temporada.
+     * @return array<string, mixed> La temporada, con parentKey (la madre si es parcial) y partialSeasons.
      */
     public function removeEvent(string $season, string $event): array
     {
