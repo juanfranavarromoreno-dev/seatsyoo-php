@@ -40,8 +40,10 @@ if ($carpetas === []) {
 }
 
 echo 'PHP ' . PHP_VERSION . (extension_loaded('curl') ? ' con curl' : ' sin curl') . "\n";
+$integracionSaltada = false;
 foreach ($carpetas as $carpeta) {
     if ($carpeta === 'integracion' && getenv('SEATSYOO_TEST_SERVER') === false) {
+        $integracionSaltada = true;
         echo "Sin servidor de pruebas (SEATSYOO_TEST_SERVER): se saltan las de integración. Para lanzarlas:\n"
             . "  BUTACAS_DIR=/ruta/a/la/copia/del/servidor node tests/ejecutar.mjs (mira «Pruebas» en el README).\n";
         continue;
@@ -57,4 +59,9 @@ foreach ($carpetas as $carpeta) {
     }
 }
 
-exit(ejecutar() > 0 ? 1 : 0);
+$fallos = ejecutar();
+if ($integracionSaltada) {
+    // El resumen de arriba solo cuenta las pruebas cargadas: que no parezca que se ha probado todo.
+    echo "Integración: saltada entera (sin SEATSYOO_TEST_SERVER).\n";
+}
+exit($fallos > 0 ? 1 : 0);

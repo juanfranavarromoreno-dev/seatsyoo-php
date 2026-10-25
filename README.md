@@ -33,6 +33,9 @@ clases con su `autoload.php`, que solo registra el cargador de las clases `Seats
 require __DIR__ . '/seatsyoo-php/autoload.php';
 ```
 
+El zip se descomprime en una carpeta con la versión en el nombre (por ejemplo `seatsyoo-php-1.0.0`): renómbrala a
+`seatsyoo-php` o ajusta la ruta del `require`.
+
 Las extensiones que usa (json, hash y pcre) vienen siempre con PHP; curl es opcional.
 
 ## Empezar

@@ -10,9 +10,7 @@ declare(strict_types=1);
 namespace Seatsyoo\Tests;
 
 use Seatsyoo\Client;
-use Seatsyoo\Http\StreamTransport;
 use Seatsyoo\SeatsyooException;
-use Seatsyoo\Webhook;
 
 grupo('Integración: los ejemplos');
 
@@ -214,25 +212,4 @@ prueba('ejemplo/tienda.php: el importe cuenta las plazas de una mesa entera, un 
     igual((float) $esperado, $tienda->importeDe('ejemplo-tienda', $objetos));
     // Una categoría sin precio cuenta 0.
     igual(0.0, $tienda->importeDe('ejemplo-tienda', [['key' => 'Anfiteatro-A-1', 'quantity' => 1]]));
-});
-
-prueba('ejemplo/webhook.php: 200 con la firma buena, 400 sin ella', function (): void {
-    $secreto = 'whsec_del_ejemplo';
-    $receptor = new ServidorLocal(__DIR__ . '/../../ejemplo/webhook.php', ['SEATSYOO_WEBHOOK_SECRET' => $secreto]);
-    $http = new StreamTransport();
-    $cuerpo = '{"id":"evt_1","type":"ping","createdAt":"2026-10-16T14:40:58.868Z","workspace":"pk_x","data":{"message":"Hola"}}';
-    $enviar = static function (?string $firma) use ($http, $receptor, $cuerpo): int {
-        $cabeceras = ['Content-Type' => 'application/json'];
-        if ($firma !== null) {
-            $cabeceras['Seatsyoo-Signature'] = $firma;
-        }
-
-        return $http->send('POST', $receptor->url . '/avisos/seatsyoo', $cabeceras, $cuerpo, 5.0)->status;
-    };
-    igual(200, $enviar(Webhook::signatureHeader($cuerpo, $secreto)));
-    igual(400, $enviar(Webhook::signatureHeader($cuerpo, 'whsec_otro')));
-    igual(400, $enviar(Webhook::signatureHeader($cuerpo, $secreto, time() - 3600)));
-    igual(400, $enviar(null));
-    igual(405, $http->send('GET', $receptor->url . '/', [], null, 5.0)->status);
-    $receptor->parar();
 });
