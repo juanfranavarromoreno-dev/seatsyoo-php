@@ -1,4 +1,10 @@
-# Lo que no va en el paquete de Composer (las pruebas y su lanzador de pnpm).
-/tests export-ignore
-/package.json export-ignore
+# Finales de línea LF en el repositorio y en la descarga, también desde Windows.
+* text=auto eol=lf
+
+# Lo que no va en la descarga de Composer (el zip de cada etiqueta vX.Y.Z): las pruebas, el CI y lo que solo sirve
+# para trabajar en el repositorio. La descarga lleva src/, autoload.php, ejemplo/, composer.json, README.md y
+# LICENSE (tests/revisar.php comprueba que no se cuele nada más).
+/.github export-ignore
 /.gitattributes export-ignore
+/.gitignore export-ignore
+/tests export-ignore

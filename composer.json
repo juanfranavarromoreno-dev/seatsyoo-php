@@ -3,9 +3,13 @@
   "description": "SDK de servidor de Seatsyoo para PHP: eventos, retenciones, reservas con número de pedido, devoluciones, temporadas y verificación de webhooks.",
   "type": "library",
   "license": "MIT",
+  "homepage": "https://seatsyoo.tikyoo.es",
   "keywords": ["seatsyoo", "asientos", "entradas", "reservas", "seating", "seats", "tickets", "webhooks"],
   "require": {
-    "php": ">=8.1"
+    "php": ">=8.1",
+    "ext-hash": "*",
+    "ext-json": "*",
+    "ext-pcre": "*"
   },
   "suggest": {
     "ext-curl": "Para las peticiones HTTP (sin ella se usan los flujos de PHP)",
@@ -17,6 +21,11 @@
     }
   },
   "scripts": {
-    "test": "php tests/ejecutar.php"
+    "test": "@php tests/ejecutar.php unitarias",
+    "revisar": "@php tests/revisar.php"
+  },
+  "scripts-descriptions": {
+    "test": "Pruebas unitarias (solo PHP). Las de integración: BUTACAS_DIR=… node tests/ejecutar.mjs",
+    "revisar": "Sintaxis de cada .php, lo que no existe en PHP 8.1, PSR-4, composer.json y .gitattributes"
   }
 }

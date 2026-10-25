@@ -1,0 +1,8 @@
+# Composer: las dependencias y el lock no van en una biblioteca.
+/vendor/
+/composer.lock
+
+# Lo que dejan el sistema y los editores.
+.DS_Store
+/.idea/
+/.vscode/
