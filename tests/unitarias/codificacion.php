@@ -212,7 +212,7 @@ prueba('cabeceras: clave secreta, JSON y versión del SDK', function (): void {
     $cabeceras = $e->transporte->ultima()['headers'];
     igual('Bearer sk_prueba', $cabeceras['Authorization']);
     igual('application/json', $cabeceras['Accept']);
-    contiene('Seatsyoo-PHP/1.0.0', $cabeceras['User-Agent']);
+    contiene('Seatsyoo-PHP/' . Client::VERSION . ' PHP/' . PHP_VERSION, $cabeceras['User-Agent']);
 });
 
 prueba('dirección del servidor: con o sin barra final, con /api/v1 o en una subcarpeta', function (): void {
@@ -261,8 +261,40 @@ prueba('opciones no válidas del cliente', function (): void {
     lanza(\InvalidArgumentException::class, fn () => new Client(secretKey: 'sk_x', server: 'https://seatsyoo.example', maxRetries: -1));
 });
 
-prueba('la versión del SDK es la del paquete', function (): void {
-    $paquete = json_decode((string) file_get_contents(__DIR__ . '/../../package.json'), true);
-    igual($paquete['version'], Client::VERSION);
-    igual('1.0.0', Client::VERSION);
+/**
+ * Ejecuta tests/version.php con estos argumentos y devuelve su código de salida y lo que escribió.
+ *
+ * @param list<string> $argumentos
+ *
+ * @return array{codigo: int, salida: string}
+ */
+function comprobarVersion(array $argumentos): array
+{
+    $proceso = proc_open(
+        array_merge([PHP_BINARY, __DIR__ . '/../version.php'], $argumentos),
+        [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $tuberias,
+    );
+    if (!is_resource($proceso)) {
+        throw new Fallo('no se pudo ejecutar tests/version.php');
+    }
+    $salida = stream_get_contents($tuberias[1]) . stream_get_contents($tuberias[2]);
+    fclose($tuberias[1]);
+    fclose($tuberias[2]);
+
+    return ['codigo' => proc_close($proceso), 'salida' => $salida];
+}
+
+prueba('la versión del SDK es X.Y.Z y solo la etiqueta vX.Y.Z cuadra con ella', function (): void {
+    cierto(preg_match('/^\d+\.\d+\.\d+$/', Client::VERSION) === 1, 'Client::VERSION es X.Y.Z: ' . Client::VERSION);
+    igual(['codigo' => 0, 'salida' => Client::VERSION . "\n"], comprobarVersion([]));
+    $bien = comprobarVersion(['v' . Client::VERSION]);
+    igual(0, $bien['codigo'], $bien['salida']);
+    [$mayor, $menor, $parche] = array_map('intval', explode('.', Client::VERSION));
+    $otras = [Client::VERSION, 'v' . $mayor . '.' . $menor . '.' . ($parche + 1), 'v' . ($mayor + 1) . '.0.0', 'v' . $mayor . '.' . $menor, 'v' . Client::VERSION . '-beta', ''];
+    foreach ($otras as $etiqueta) {
+        $mal = comprobarVersion([$etiqueta]);
+        igual(1, $mal['codigo'], "la etiqueta «{$etiqueta}» no cuadra");
+    }
+    contiene('Client::VERSION es ' . Client::VERSION, comprobarVersion(['v' . ($mayor + 1) . '.0.0'])['salida']);
 });
