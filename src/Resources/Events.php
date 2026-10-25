@@ -31,6 +31,9 @@ class Events extends ApiResource
     /**
      * Crea un evento con la versión publicada de un plano.
      *
+     * Sin precios: con pricing lanza InvalidArgumentException antes de llamar (el servidor lo descartaría sin
+     * avisar). Los precios los pone tu web, que se los pasa al visor con su opción pricing.
+     *
      * @param array<string, mixed> $params chartKey (obligatorio), key, name, date, tableModes, categoryOverrides
      *                                     (estos dos, mapas «clave => valor»; vacíos, se envían como {}).
      *
@@ -38,6 +41,8 @@ class Events extends ApiResource
      */
     public function create(array $params): array
     {
+        $params = self::withoutPricing($params, 'el evento');
+
         return $this->http->json('POST', '/events', self::maps($params, ['tableModes', 'categoryOverrides']));
     }
 
@@ -180,8 +185,22 @@ class Events extends ApiResource
     }
 
     /**
-     * Pone un estado: "free" libera, "held" retiene (con $holdToken), "booked" o un estado propio
-     * (invitacion, prensa…) reserva con ese estado.
+     * Pone un estado a unos objetos. Lo que hace depende del estado:
+     *
+     * - "free" libera. Sin $holdToken, todo lo de esos objetos (retenido o vendido, como release()) y además les
+     *   quita las marcas; con $holdToken, solo lo retenido con ese token, y las marcas se quedan.
+     * - "held" retiene con $holdToken (obligatorio).
+     * - "booked" reserva, como book() (con $orderId, con ese pedido).
+     * - Un estado propio (los del catálogo del espacio: /statuses, con Client::request()) hace lo que diga el estado
+     *   de base del que cuelga:
+     *   - base free (visibilidad reducida, junto al pasillo…): marca la plaza sin ocuparla; se sigue reteniendo y
+     *     vendiendo, y la marca se lee con marks();
+     *   - base blocked: bloquea la plaza (no se vende ni cuenta para la ocupación);
+     *   - base occupied (invitación, prensa…): la ocupa como una reservada, con ese estado y con $orderId si lo das.
+     *   Un estado que no está en el catálogo cuenta como occupied.
+     *
+     * Al retener u ocupar no mira si el objeto está a la venta ni sus canales: es para tu taquilla, no para el
+     * comprador.
      *
      * @param list<string|array{key: string, quantity?: int}> $objects
      *
@@ -265,7 +284,15 @@ class Events extends ApiResource
 
     /**
      * Las marcas del evento: plazas con un estado propio que cuelga de «libre» (visibilidad reducida, junto al
-     * pasillo…). Siguen libres y se pueden vender; se ponen con changeStatus() y "free" las quita.
+     * pasillo…). Se ponen con changeStatus() y no ocupan la plaza: se sigue reteniendo y vendiendo.
+     *
+     * La marca sigue aunque la plaza se retenga, se venda o se devuelva, así que también trae plazas vendidas. Solo
+     * la quita changeStatus(…, "free") sin token, que además libera la plaza del todo (lo retenido y lo vendido);
+     * otro estado con base free la sustituye, y borrar el estado del catálogo quita las suyas.
+     *
+     * Para un visor en modo «manager» (tu taquilla o tu panel, que pinta cada plaza por su estado), "marks" es su
+     * opción marks; el nombre, el color y el icono de cada estado van en su opción statusStyles, sacados del
+     * catálogo (GET /statuses con Client::request()). El visor del comprador no usa ninguna de las dos.
      *
      * @return array{marks: array<string, string>} Clave del objeto => clave del estado.
      */

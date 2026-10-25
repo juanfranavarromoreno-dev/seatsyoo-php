@@ -11,6 +11,7 @@ namespace Seatsyoo\Tests;
 
 use Seatsyoo\Client;
 use Seatsyoo\Http\StreamTransport;
+use Seatsyoo\SeatsyooException;
 use Seatsyoo\Webhook;
 
 grupo('Integración: los ejemplos');
@@ -127,6 +128,39 @@ prueba('ejemplo/tienda.php: reserva lo guardado en la caja, no lo que el token r
     $vacio = $seatsyoo->holdTokens->create()['token'];
     lanza(\RuntimeException::class, fn () => $tienda->alPasarPorCaja('pedido-vacio', 'ejemplo-tienda', $vacio));
     lanza(\RuntimeException::class, fn () => $tienda->alConfirmarElPago('pedido-vacio'));
+});
+
+prueba('ejemplo/tienda.php: si otro se lleva una plaza entre la caja y el pago, no vende nada y queda por devolver', function (): void {
+    require_once __DIR__ . '/../../ejemplo/tienda.php';
+    $seatsyoo = new Client(secretKey: (string) getenv('SEATSYOO_TEST_SECRET_KEY'), server: (string) getenv('SEATSYOO_TEST_SERVER'));
+    $seatsyoo->events->create(['chartKey' => 'teatro', 'key' => 'ejemplo-perdida', 'name' => 'Plaza perdida']);
+    $tienda = new \Tienda($seatsyoo, ['preferente' => 45, 'platea' => 30]);
+    $token = $seatsyoo->holdTokens->create()['token'];
+    $seatsyoo->events->hold('ejemplo-perdida', ['Platea-E-1', 'Platea-E-2'], holdToken: $token);
+    cierto($tienda->alPasarPorCaja('pedido-perdido', 'ejemplo-perdida', $token) > 0, 'cobra lo retenido');
+
+    // Entre la caja y el pago, el comprador suelta Platea-E-2 en el visor y otro comprador la retiene.
+    $seatsyoo->events->release('ejemplo-perdida', ['Platea-E-2'], holdToken: $token);
+    $otro = $seatsyoo->holdTokens->create()['token'];
+    $seatsyoo->events->hold('ejemplo-perdida', ['Platea-E-2'], holdToken: $otro);
+
+    $error = lanza(SeatsyooException::class, fn () => $tienda->alConfirmarElPago('pedido-perdido'));
+    igual([409, 'objects-not-available'], [$error->getStatus(), $error->getErrorCode()]);
+    igual([['key' => 'Platea-E-2', 'reason' => 'held']], $error->getDetails());
+    // Todo o nada: no se ha vendido nada, ni la plaza que seguía retenida.
+    igual([], $seatsyoo->events->retrieveOrder('ejemplo-perdida', 'pedido-perdido')['objects']);
+    igual(['s' => 'held', 'mine' => true], $seatsyoo->events->statuses('ejemplo-perdida', holdToken: $token)['objects']['Platea-E-1']);
+    igual(
+        ['motivo' => 'objects-not-available', 'detalles' => [['key' => 'Platea-E-2', 'reason' => 'held']]],
+        $tienda->guardado('pedido-perdido')['porDevolver'] ?? null,
+        'queda por devolver',
+    );
+
+    // Aunque la plaza quede libre otra vez, un aviso repetido de la pasarela no la vende: el cobro ya se devolvió.
+    $seatsyoo->events->release('ejemplo-perdida', ['Platea-E-2'], holdToken: $otro);
+    lanza(\RuntimeException::class, fn () => $tienda->alConfirmarElPago('pedido-perdido'));
+    igual([], $seatsyoo->events->retrieveOrder('ejemplo-perdida', 'pedido-perdido')['objects']);
+    cierto(!isset($seatsyoo->events->statuses('ejemplo-perdida')['objects']['Platea-E-2']), 'Platea-E-2 sigue libre');
 });
 
 prueba('ejemplo/tienda.php: el importe cuenta las plazas de una mesa entera, un palco y una zona de pie', function (): void {

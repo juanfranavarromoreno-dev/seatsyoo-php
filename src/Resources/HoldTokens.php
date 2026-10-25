@@ -13,9 +13,11 @@ class HoldTokens extends ApiResource
     /**
      * Crea un token que caduca a los holdPeriodSeconds del espacio.
      *
-     * Si se lo pasas al visor, no cuenta para los topes por conexión (IP) del visor (409 hold-limit-ip), que
-     * son para los tokens que crea el propio visor; el de plazas por comprador (maxHoldPerToken, 409
-     * hold-limit) sí.
+     * Si se lo pasas al visor: el token no lleva la conexión (IP) del comprador, así que no cuenta para el tope
+     * de plazas retenidas por conexión (409 hold-limit-ip), que es para los tokens que crea el propio visor. Lo
+     * que el visor retenga con él sí cuenta para el de plazas por comprador (maxHoldPerToken, 409 hold-limit;
+     * también lo que retengas con él desde tu servidor) y para el de plazas movidas desde la IP del comprador
+     * (429 hold-rate-limited). Con la clave secreta, ninguno de esos topes.
      *
      * @return array{token: string, expiresAt: string, expiresInSeconds: int}
      */

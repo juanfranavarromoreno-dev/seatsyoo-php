@@ -25,6 +25,9 @@ class Seasons extends ApiResource
     /**
      * Crea una temporada.
      *
+     * Sin precios: con pricing lanza InvalidArgumentException antes de llamar (el servidor lo descartaría sin
+     * avisar). Los precios de un abono los pone tu web.
+     *
      * @param array<string, mixed> $params chartKey (obligatorio); name (sin él, «Temporada N» con la clave
      *                                     «temporada-N»), key, eventKeys y pick (abono parcial).
      *
@@ -32,7 +35,7 @@ class Seasons extends ApiResource
      */
     public function create(array $params): array
     {
-        return $this->http->json('POST', '/seasons', $params);
+        return $this->http->json('POST', '/seasons', self::withoutPricing($params, 'la temporada'));
     }
 
     /** @return array<string, mixed> La temporada, con sus eventos por fecha, parentKey y partialSeasons. */
@@ -42,7 +45,7 @@ class Seasons extends ApiResource
     }
 
     /**
-     * Cambia name, key o pick (null la vuelve completa).
+     * Cambia name, key o pick (null la vuelve completa). Con pricing lanza InvalidArgumentException antes de llamar.
      *
      * @param array<string, mixed> $changes
      *
@@ -50,7 +53,7 @@ class Seasons extends ApiResource
      */
     public function update(string $season, array $changes): array
     {
-        return $this->http->json('PATCH', $this->path($season), $changes);
+        return $this->http->json('PATCH', $this->path($season), self::withoutPricing($changes, 'los cambios de la temporada'));
     }
 
     /**
@@ -66,7 +69,8 @@ class Seasons extends ApiResource
 
     /**
      * Añade eventos que ya existen ($eventKeys) o crea otros nuevos del mismo plano y los añade
-     * ($events: [['key' => …, 'name' => …, 'date' => …]]), todo o nada.
+     * ($events: [['key' => …, 'name' => …, 'date' => …]]), todo o nada. Un evento nuevo con pricing lanza
+     * InvalidArgumentException antes de llamar, como Events::create().
      *
      * @param list<string>|null              $eventKeys
      * @param list<array<string, mixed>>|null $events
@@ -75,6 +79,12 @@ class Seasons extends ApiResource
      */
     public function addEvents(string $season, ?array $eventKeys = null, ?array $events = null): array
     {
+        foreach ($events ?? [] as $event) {
+            if (is_array($event)) {
+                self::withoutPricing($event, 'los eventos nuevos de la temporada');
+            }
+        }
+
         return $this->http->json('POST', $this->path($season) . '/events', self::fields([
             'eventKeys' => $eventKeys,
             'events' => $events,
@@ -201,6 +211,9 @@ class Seasons extends ApiResource
     }
 
     /**
+     * Pone un estado en todos los eventos de la temporada, como Events::changeStatus(): también las marcas de los
+     * estados propios con base free, que se leen evento a evento con Events::marks().
+     *
      * @param list<string|array{key: string, quantity?: int}> $objects
      * @param list<string>|null                               $events
      *

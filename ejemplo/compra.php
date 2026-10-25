@@ -67,7 +67,16 @@ $seatsyoo->holdTokens->extend($token, seconds: 600);
 // 4. Con el pago confirmado, reserva la lista guardada en la caja. Si la petición se corta, el SDK la repite sola:
 //    con el mismo pedido no se vende dos veces. Tras un reintento, $reserva['retried'] es true y
 //    $reserva['objects'] sigue trayendo lo reservado.
-$reserva = $tienda->alConfirmarElPago($pedido);
+try {
+    $reserva = $tienda->alConfirmarElPago($pedido);
+} catch (SeatsyooException $e) {
+    if (!isset($tienda->guardado($pedido)['porDevolver'])) {
+        throw $e;   // Sin respuesta o un 5xx: no se sabe si se vendió; repítelo más tarde con el mismo pedido.
+    }
+    // Cobrado y sin vender nada (todo o nada): devuelve el cobro con tu pasarela y no emitas entradas.
+    echo "No se ha podido reservar el pedido $pedido ({$e->getErrorCode()}): devuelve el cobro.\n";
+    exit(1);
+}
 echo 'Reservadas con el pedido ' . $pedido . ': ' . implode(', ', $reserva['objects']) . (empty($reserva['retried']) ? '' : ' (tras repetir la petición)') . "\n";
 
 // 5. El pedido en Seatsyoo y las cuentas: lo vendido ha de ser lo que se cobró.

@@ -128,6 +128,26 @@ abstract class ApiResource
     }
 
     /**
+     * Seatsyoo no guarda precios. Al cambiar un evento, el servidor responde 400 pricing-not-supported si llega
+     * «pricing»; al crear un evento o una temporada (o cambiarla) lo descartaría sin avisar, así que el SDK lo
+     * rechaza antes de llamar: quien migre código que ponía precios lo ve enseguida, en lugar de perderlos.
+     *
+     * @param array<string, mixed> $params
+     *
+     * @return array<string, mixed>
+     */
+    protected static function withoutPricing(array $params, string $where): array
+    {
+        if (array_key_exists('pricing', $params)) {
+            throw new \InvalidArgumentException(
+                'Seatsyoo no guarda precios: quita «pricing» de ' . $where . '. Los precios los pone tu web: pásaselos al visor con su opción pricing y cobra con ellos'
+            );
+        }
+
+        return $params;
+    }
+
+    /**
      * Los campos que la API espera como objeto JSON ({"clave": valor}) van como {} cuando están vacíos: un
      * array de PHP vacío saldría como lista ([]) y la API lo rechazaría con un 400.
      *

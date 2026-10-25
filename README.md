@@ -74,12 +74,12 @@ $seatsyoo->holdTokens->extend($holdToken, seconds: 600);
 try {
     $seatsyoo->events->book($evento, $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
 } catch (SeatsyooException $e) {
-    if ($e->getErrorCode() !== 'objects-not-available') {
-        throw $e;
+    if (!in_array($e->getErrorCode(), ['objects-not-available', 'hold-token-expired', 'invalid-hold-token'], true)) {
+        throw $e;   // Sin respuesta o un 5xx: no se sabe si se vendió; repítelo con el mismo pedido, que no vende dos veces.
     }
-    foreach ($e->getDetails() as $plaza) {
-        // $plaza['key'] ya no está disponible: $plaza['reason'] es held, booked, not-for-sale…
-    }
+    // Cobrado y sin vender nada (la reserva es todo o nada): devuelve el cobro, u ofrece otras plazas en un pedido
+    // nuevo, y no emitas entradas ni vuelvas a reservar este pedido. En objects-not-available, getDetails() dice qué
+    // plazas y por qué: [['key' => 'Platea-C-2', 'reason' => 'held']] (held, booked, not-for-sale…).
 }
 
 // Lo vendido con ese pedido: clave, plazas y estado de cada objeto. Compáralo con lo que cobraste.
@@ -95,8 +95,8 @@ que si reservaras la lista que manda el navegador, alguien podría añadir butac
 caja y el pago el comprador puede seguir reteniendo con el mismo token: si volvieras a preguntar al confirmarse
 el pago, reservarías más de lo cobrado (lo que retenga de más caduca solo). Por eso cada objeto va con su
 cantidad: en una zona de pie, reservar sin cantidad reserva lo que el token tenga allí en ese momento. La caja
-entera, con el importe y la comprobación de que lo vendido es lo cobrado, está en
-[`ejemplo/tienda.php`](ejemplo/tienda.php).
+entera, con el importe, la comprobación de que lo vendido es lo cobrado y qué hacer si la reserva falla con el pago
+ya cobrado (el pedido queda por devolver y no se reserva otra vez), está en [`ejemplo/tienda.php`](ejemplo/tienda.php).
 
 Las acciones son todo o nada: si un objeto no se puede, no se toca ninguno. Con `orderId`, repetir la
 reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias. El número de
@@ -113,7 +113,9 @@ $r = $seatsyoo->events->bestAvailable('hamlet-2026-11-20', 2, categories: ['plat
 ## Precios
 
 Seatsyoo no guarda precios: los pone la web que vende. Los eventos, los pedidos y los avisos no llevan
-importes, y `events->update()` con `pricing` da `400 pricing-not-supported`. Ten tus precios por clave de
+importes, y `events->update()` con `pricing` da `400 pricing-not-supported`. Al crear un evento
+(`events->create()`) o una temporada, al cambiarla o al añadirle eventos nuevos, el servidor descartaría `pricing`
+sin avisar, así que el SDK lo rechaza antes de llamar con `InvalidArgumentException`. Ten tus precios por clave de
 categoría (las de tu plano), pásaselos al visor con su opción `pricing` para que los enseñe y calcula lo que
 cobras en tu servidor, con la categoría y las plazas de cada objeto:
 
@@ -124,7 +126,8 @@ foreach ($objetos as $objeto) {
     $info = $seatsyoo->events->retrieveObject($evento, $objeto['key']);
     // Por plaza: una mesa que se vende entera cuenta todas sus sillas.
     $plazas = $info['kind'] === 'area' ? $objeto['quantity'] : $objeto['quantity'] * $info['capacity'];
-    $importe += ($precios[$info['category']] ?? 0) * $plazas;
+    // Un objeto sin categoría trae null: (string) evita el aviso de PHP 8.5 por usar null como índice.
+    $importe += ($precios[(string) ($info['category'] ?? '')] ?? 0) * $plazas;
 }
 ```
 
@@ -139,13 +142,42 @@ web, en `onError` del visor), nunca a este SDK:
 | Código | Qué pasa |
 | --- | --- |
 | `409 hold-limit` | El token ya tiene las plazas que admite el espacio en ese evento (en «mejor disponible», pedir más que ese tope). |
-| `409 hold-limit-ip` | Los tokens creados por el visor desde esa conexión (IP) ya retienen lo que admite una conexión en ese evento. |
-| `429 hold-rate-limited` | Desde esa conexión se han retenido demasiadas plazas en poco tiempo (con `Retry-After`). |
+| `409 hold-limit-ip` | Los tokens creados por el visor desde esa conexión (IP) ya retienen lo que admite una conexión en ese evento: el 10 % del aforo, hasta 200 y nunca menos que `maxHoldPerToken`. |
+| `429 hold-rate-limited` | Desde esa conexión (IP) se han retenido demasiadas plazas en poco tiempo: 600 cada 10 minutos (con `Retry-After`). |
 
-Con la clave secreta no hay ese tope: tu servidor retiene y reserva lo que necesite, y pide «mejor disponible»
-hasta 100. Si creas el token en tu servidor (`holdTokens->create()`) y se lo pasas al visor, ese token no cuenta
-para los topes por conexión; el de plazas por comprador sí, y cuenta también lo que retengas con él desde tu
-servidor.
+Con la clave secreta no hay ninguno de estos topes: tu servidor retiene y reserva lo que necesite, y pide «mejor
+disponible» hasta 100. Si creas el token en tu servidor (`holdTokens->create()`) y se lo pasas al visor, ese token
+no lleva la conexión (IP) del comprador, así que no cuenta para `409 hold-limit-ip`. Los otros dos sí le afectan
+cuando el visor retiene con él: `409 hold-limit` (las plazas por comprador, en las que cuenta también lo que
+retengas con él desde tu servidor) y `429 hold-rate-limited` (las plazas que se retienen desde la IP del
+comprador).
+
+## Estados propios y marcas
+
+Los estados propios del espacio (invitación, prensa, visibilidad reducida…) están en su catálogo, que se gestiona
+con `request()` en `/statuses` ([Otras rutas](#otras-rutas)). Cada uno cuelga de un estado de base, y
+`events->changeStatus()` hace con él lo que diga su base:
+
+- `occupied` (invitación, prensa…): ocupa la plaza como una reservada, con ese estado (y con tu `orderId` si lo das).
+- `blocked`: bloquea la plaza; no se vende ni cuenta para la ocupación.
+- `free` (visibilidad reducida, junto al pasillo…): marca la plaza sin ocuparla; se sigue reteniendo y vendiendo.
+
+```php
+$seatsyoo->events->changeStatus($evento, ['Platea-G-3'], 'visibilidad-reducida');   // un estado con base free
+$seatsyoo->events->marks($evento);   // ['marks' => ['Platea-G-3' => 'visibilidad-reducida']]
+```
+
+La marca sigue aunque la plaza se retenga, se venda o se devuelva, así que `marks()` también trae plazas
+vendidas. Solo la quita `changeStatus($evento, $objetos, 'free')` sin token, que además libera la plaza del todo
+(lo retenido y lo vendido, como `release()` sin token); otro estado con base `free` la sustituye, y borrar el estado
+del catálogo quita las suyas.
+
+Esto es lo que alimenta un visor en modo «manager» (tu taquilla o tu panel, que pinta cada plaza por su estado):
+`events->marks($evento)['marks']` va a su opción `marks`, y el catálogo
+(`request('GET', '/statuses', query: ['event' => $evento])['statuses']`), por clave de estado, a `statusStyles`:
+`name` y `color` tal cual; el icono cambia de forma (`['type' => 'text', 'text' => …]` va como `['text' => …]`, y
+`['type' => 'image', 'src' => …]` como `['image' => …]`; los de la colección del panel no tienen equivalente y el
+visor pinta solo el color). El visor del comprador no usa ninguna de las dos.
 
 ## Errores
 
@@ -168,8 +200,8 @@ Los códigos están en la página de errores de la documentación (`/docs/errore
 - `409 not-test-environment`: `workspace->reset()` con la clave de producción; solo se vacía un entorno de
   pruebas.
 
-Un error de programación (una clave vacía, una lista de objetos vacía) lanza `InvalidArgumentException` antes de
-llamar a la API.
+Un error de programación (una clave vacía, una lista de objetos vacía, `pricing` al crear un evento o una
+temporada) lanza `InvalidArgumentException` antes de llamar a la API.
 
 ## Reintentos
 
@@ -338,8 +370,8 @@ $seatsyoo = new Client(secretKey: …, server: …, transport: new MiTransporte(
 ## Ejemplos
 
 - [`ejemplo/tienda.php`](ejemplo/tienda.php): la caja de una tienda. En la caja, lo que retiene el token, el
-  importe con tus precios y la lista guardada con el pedido; con el pago confirmado, la reserva de esa lista;
-  y la comprobación de que lo vendido es lo cobrado.
+  importe con tus precios y la lista guardada con el pedido; con el pago confirmado, la reserva de esa lista (y,
+  si falla con el pago ya cobrado, el pedido por devolver); y la comprobación de que lo vendido es lo cobrado.
 - [`ejemplo/compra.php`](ejemplo/compra.php): una compra de principio a fin con esa caja (retener, cobrar lo
   retenido, reservar con número de pedido, consultar y devolver).
 - [`ejemplo/webhook.php`](ejemplo/webhook.php): un receptor de webhooks en PHP plano.
@@ -373,18 +405,35 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
 - Resources: `events`, `holdTokens`, `seasons`, `charts`, `webhooks`, `workspace`, plus `request($method, $path,
   $body, $query)` for any other `/api/v1` route. Keys in paths are URL-encoded for you.
 - Seatsyoo stores no prices: your website sets them per category, passes them to the viewer (`pricing` option)
-  and computes the amount from each object's category and capacity (`events->retrieveObject()`). Events, orders
-  and webhooks carry no amounts, and `events->update()` with `pricing` fails with `400 pricing-not-supported`.
+  and computes the amount from each object's category and capacity (`events->retrieveObject()`; cast a `null`
+  category to string, as in the README snippet, to avoid PHP 8.5's deprecation notice). Events, orders and
+  webhooks carry no amounts, and `events->update()` with `pricing` fails with `400 pricing-not-supported`. The
+  server would silently drop `pricing` when creating an event or a season (or updating a season, or adding new
+  events to it), so the SDK rejects it beforehand with `InvalidArgumentException`.
 - Selling in two steps: at checkout, ask what the hold token holds (`events->statuses()` with `holdToken`, the
   `mine` entries, always with a quantity: `mq` or 1), charge for that list and store it with the order; once paid,
-  book exactly the stored list with your `orderId`. Never book the list the browser sends. See
+  book exactly the stored list with your `orderId`. Never book the list the browser sends. If booking fails after
+  payment (`409 objects-not-available`, `400 hold-token-expired` or `400 invalid-hold-token`), nothing was sold
+  (actions are all or nothing): refund the payment (or offer other seats in a new order) and never book that order
+  again. With no response or a 5xx, repeat it with the same `orderId`, which never sells twice. See
   `ejemplo/tienda.php`.
-- The viewer's per-buyer cap (`maxHoldPerToken`, 10 by default; `409 hold-limit`, `409 hold-limit-ip`,
-  `429 hold-rate-limited`) applies to the public API only, never to the secret key; read it with
-  `workspace->retrieve()` and change it with `workspace->update()`.
+- The viewer's caps apply to the public API only, never to the secret key: `409 hold-limit` (per token and event,
+  `maxHoldPerToken`, 10 by default; read it with `workspace->retrieve()` and change it with `workspace->update()`),
+  `409 hold-limit-ip` (per IP and event: 10 % of capacity, up to 200, never below `maxHoldPerToken`) and
+  `429 hold-rate-limited` (600 places held per IP every 10 minutes). A token created on your server with
+  `holdTokens->create()` carries no IP, so it does not count towards `409 hold-limit-ip`; when the viewer holds with
+  it, `409 hold-limit` (which also counts what you hold with it from your server) and `429 hold-rate-limited`
+  (places held from the buyer's IP) still apply.
+- Custom statuses hang from a base status, and `events->changeStatus()` follows it: `occupied` takes the place like
+  a booking, `blocked` blocks it, and `free` marks it while it stays on sale. `events->marks($event)` reads the marks;
+  a mark survives holding, booking and refunding (so it may list sold places). Only `changeStatus(…, 'free')`
+  without a token removes it from a place, and that also releases the place entirely (held and sold); another
+  free-based status replaces it, and deleting the status removes its marks. For a viewer in `manager` mode, `marks()` feeds
+  its `marks` option and the status catalog (`request('GET', '/statuses')`) its `statusStyles` (name and color as
+  is; text and image icons change shape). The buyer's viewer uses neither.
 - Test environment: `sk_test_…` keys work the same on it; `workspace->createTestEnvironment()`,
   `charts->copyToTest($chart)` and `workspace->reset()` (test keys only; `409 not-test-environment` with a
-  production key). `events->marks($event)` reads the marks (custom statuses based on free).
+  production key).
 - Errors throw `Seatsyoo\SeatsyooException` with `getStatus()` (0 when there was no response),
   `getErrorCode()` (stable API code, or `network-error` / `timeout`) and `getDetails()`.
 - Retries (network errors, timeouts, 429 honouring `Retry-After` up to 60 s, 502/503/504, exponential backoff
@@ -392,11 +441,12 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   refunding a whole order. When `book()`, `refund()` or `delete()` had to be repeated, the result carries
   `'retried' => true`; a repeated booking that comes back unchanged still lists the requested keys in
   `objects` (with `seq` 0), and a repeated delete answered with `404 not-found` counts as done. An empty
-  `orderId` (`''`) throws `InvalidArgumentException`. `timeout` covers the whole request, body included.
+  `orderId` (`''`) throws `InvalidArgumentException`, like `pricing` when creating an event or a season.
+  `timeout` covers the whole request, body included.
 - Empty JSON objects: `events->create()`/`update()` and `workspace->update()` send empty maps as `{}`; with
   `request()`, pass `(object) []` for an empty object.
 - `Webhook::verify()` checks the `Seatsyoo-Signature` header (`t=<seconds>,v1=<hex>`, HMAC-SHA256 of
   `"<t>.<raw body>"`), accepts several `v1` values, compares in constant time, rejects anything outside the
   tolerance and returns the decoded event, or throws `Seatsyoo\SignatureVerificationException`.
-- Examples in `ejemplo/` (a checkout that books what it charged, a full purchase and a plain-PHP webhook
-  receiver). License: MIT.
+- Examples in `ejemplo/` (a checkout that books what it charged and flags the order for a refund if booking fails
+  after payment, a full purchase and a plain-PHP webhook receiver). License: MIT.
