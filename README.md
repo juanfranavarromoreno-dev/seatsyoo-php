@@ -282,6 +282,23 @@ con sus ventas, retenciones e historial, y sus tokens; conserva los planos, las 
 ajustes, y no manda avisos. Con la clave de producción da `409 not-test-environment`: así no se borra nada de
 verdad. Los avisos de los webhooks del entorno de pruebas llevan `'test' => true`.
 
+## Diseñador incrustado
+
+Para que tus clientes dibujen sus recintos en tu web con el diseñador de Seatsyoo: cuando alguien con permiso para
+editar un plano va a diseñar, tu servidor abre una sesión y le da el token a tu web, que lo abre con
+`Seatsyoo.designer` (del mismo guion que el visor):
+
+```php
+// En una ruta de tu servidor que solo llama quien puede editar el plano.
+$sesion = $seatsyoo->charts->designerSession('teatro-principal', expiresIn: 3600);
+echo json_encode(['token' => $sesion['token']]); // a tu web: nunca la clave secreta
+```
+
+El token (`dsg_…`) solo sirve para ese plano (leerlo, guardarlo y, salvo con `publish: false`, publicarlo), caduca a
+los `expiresIn` segundos (de 300 a 86400; 3600 por defecto) y deja de valer si borras la clave secreta con que se abrió
+o archivas el plano. Para que no se corte, la web pide otro a la misma ruta antes de que caduque (opción
+`refreshToken` de `Seatsyoo.designer`). Todo, en `/docs/disenador` de tu Seatsyoo.
+
 ## Webhooks
 
 Verifica cada aviso antes de hacer nada con él. `Webhook::verify()` comprueba la firma de la cabecera
@@ -343,6 +360,7 @@ $seatsyoo->seasons->statuses($temporada, holdToken: null, events: null)
 $seatsyoo->seasons->hold / book / release / refund / changeStatus / bestAvailable   // como en events, con events: [...] para un abono parcial
 
 $seatsyoo->charts->list(archived: false, q: null) · retrieve($plano) · copyToTest($plano)
+$seatsyoo->charts->designerSession($plano, publish: null, expiresIn: null)   // diseñador incrustado
 
 $seatsyoo->webhooks->list() · create(['url' => …, 'types' => […]]) · update($webhook, […]) · delete($webhook)
 $seatsyoo->webhooks->test($webhook) · deliveries($webhook, limit: null) · retryDelivery($webhook, $id)

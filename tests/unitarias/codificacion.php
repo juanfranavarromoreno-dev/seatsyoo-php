@@ -75,6 +75,7 @@ prueba('cada acción va a su ruta con su método', function (): void {
         ['GET', '/charts', fn (Entorno $e) => $e->charts->list()],
         ['GET', '/charts/teatro', fn (Entorno $e) => $e->charts->retrieve('teatro')],
         ['POST', '/charts/teatro/copy-to-test', fn (Entorno $e) => $e->charts->copyToTest('teatro')],
+        ['POST', '/charts/teatro/designer-sessions', fn (Entorno $e) => $e->charts->designerSession('teatro')],
         ['GET', '/webhooks', fn (Entorno $e) => $e->webhooks->list()],
         ['POST', '/webhooks', fn (Entorno $e) => $e->webhooks->create(['url' => 'https://mitienda.example/avisos'])],
         ['PATCH', '/webhooks/wh_1', fn (Entorno $e) => $e->webhooks->update('wh_1', ['active' => false])],

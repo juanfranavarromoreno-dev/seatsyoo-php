@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Seatsyoo\Resources;
 
-/** Planos (se dibujan en el diseñador del panel; por la API se consultan y se copian al entorno de pruebas). */
+/**
+ * Planos (se dibujan en el diseñador del panel o en el diseñador incrustado en tu web; por la API se consultan, se
+ * copian al entorno de pruebas y se abren sesiones de ese diseñador).
+ */
 class Charts extends ApiResource
 {
     /**
@@ -40,5 +43,27 @@ class Charts extends ApiResource
     public function copyToTest(string $chart): array
     {
         return $this->http->json('POST', '/charts/' . self::key($chart) . '/copy-to-test');
+    }
+
+    /**
+     * Abre una sesión del diseñador incrustado para el plano: su "token" (dsg_…) es lo que tu web pasa a
+     * Seatsyoo.designer (o, sin el SDK del navegador, "url" en un iframe); nunca la clave secreta. Ábrela cuando
+     * alguien con permiso para editar ese plano va a diseñar, no antes. No se reintenta: cada intento abriría otra.
+     *
+     * Errores: 404 si el plano no existe, 409 chart-archived, 409 too-many-designer-sessions (1000 a la vez por espacio)
+     * y 400 con un expiresIn fuera de 300–86400.
+     *
+     * @param bool|null $publish   Si el diseñador puede publicar (por defecto, sí). Con false, lo dibujado queda como
+     *                             borrador.
+     * @param int|null  $expiresIn Segundos que vale el token, de 300 a 86400 (por defecto, 3600).
+     *
+     * @return array{token: string, url: string, expiresAt: string, chart: array{key: string, name: string}, canPublish: bool}
+     */
+    public function designerSession(string $chart, ?bool $publish = null, ?int $expiresIn = null): array
+    {
+        return $this->http->json('POST', '/charts/' . self::key($chart) . '/designer-sessions', self::fields([
+            'publish' => $publish,
+            'expiresIn' => $expiresIn,
+        ]));
     }
 }

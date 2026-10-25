@@ -28,7 +28,7 @@ use Seatsyoo\Resources\Workspace;
  */
 class Client
 {
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.1.0';
 
     /** Eventos y la venta: retener, reservar, devolver, mejor disponible, estados y pedidos. */
     public readonly Events $events;

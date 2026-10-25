@@ -79,6 +79,19 @@ prueba('lee el espacio de la clave', function (): void {
     igual(getenv('SEATSYOO_TEST_TEST_PUBLIC_KEY'), $espacio['testEnvironment']['publicKey']);
 });
 
+prueba('abre una sesión del diseñador incrustado: un token que solo vale en la página del diseñador', function (): void {
+    $sesion = Api::$seatsyoo->charts->designerSession('teatro', publish: false, expiresIn: 600);
+    igual(1, preg_match('/^dsg_[\w-]+\.[\w-]+$/', $sesion['token']));
+    igual(['key' => 'teatro', 'name' => $sesion['chart']['name']], $sesion['chart']);
+    igual(false, $sesion['canPublish']);
+    igual(true, str_contains($sesion['url'], '#t=' . rawurlencode($sesion['token'])));
+    // Con la API de la clave secreta no vale.
+    $conToken = new Client(secretKey: $sesion['token'], server: (string) getenv('SEATSYOO_TEST_SERVER'));
+    igual(401, lanza(SeatsyooException::class, fn () => $conToken->charts->list())->getStatus());
+    igual(404, lanza(SeatsyooException::class, fn () => Api::$seatsyoo->charts->designerSession('no-existe'))->getStatus());
+    igual(400, lanza(SeatsyooException::class, fn () => Api::$seatsyoo->charts->designerSession('teatro', expiresIn: 10))->getStatus());
+});
+
 prueba('lista y lee planos y eventos', function (): void {
     $planos = Api::$seatsyoo->charts->list();
     igual(['teatro'], array_column($planos['charts'], 'key'));
