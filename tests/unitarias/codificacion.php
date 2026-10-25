@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Seatsyoo\Tests;
 
 use Seatsyoo\Client;
+use Seatsyoo\SeatsyooException;
 
 grupo('Rutas, claves y cuerpos');
 
@@ -48,6 +49,7 @@ prueba('cada acción va a su ruta con su método', function (): void {
         ['POST', '/events/hamlet/for-sale', fn (Entorno $e) => $e->events->markForSale('hamlet')],
         ['GET', '/events/hamlet/statuses', fn (Entorno $e) => $e->events->statuses('hamlet')],
         ['GET', '/events/hamlet/status-changes', fn (Entorno $e) => $e->events->statusChanges('hamlet')],
+        ['GET', '/events/hamlet/marks', fn (Entorno $e) => $e->events->marks('hamlet')],
         ['GET', '/events', fn (Entorno $e) => $e->events->list()],
         ['POST', '/events', fn (Entorno $e) => $e->events->create(['chartKey' => 'teatro'])],
         ['GET', '/events/hamlet', fn (Entorno $e) => $e->events->retrieve('hamlet')],
@@ -72,6 +74,7 @@ prueba('cada acción va a su ruta con su método', function (): void {
         ['POST', '/seasons/abono/actions/best-available', fn (Entorno $e) => $e->seasons->bestAvailable('abono', 2)],
         ['GET', '/charts', fn (Entorno $e) => $e->charts->list()],
         ['GET', '/charts/teatro', fn (Entorno $e) => $e->charts->retrieve('teatro')],
+        ['POST', '/charts/teatro/copy-to-test', fn (Entorno $e) => $e->charts->copyToTest('teatro')],
         ['GET', '/webhooks', fn (Entorno $e) => $e->webhooks->list()],
         ['POST', '/webhooks', fn (Entorno $e) => $e->webhooks->create(['url' => 'https://mitienda.example/avisos'])],
         ['PATCH', '/webhooks/wh_1', fn (Entorno $e) => $e->webhooks->update('wh_1', ['active' => false])],
@@ -80,6 +83,9 @@ prueba('cada acción va a su ruta con su método', function (): void {
         ['GET', '/webhooks/wh_1/deliveries', fn (Entorno $e) => $e->webhooks->deliveries('wh_1')],
         ['POST', '/webhooks/wh_1/deliveries/42/retry', fn (Entorno $e) => $e->webhooks->retryDelivery('wh_1', 42)],
         ['GET', '/workspace', fn (Entorno $e) => $e->workspace->retrieve()],
+        ['PATCH', '/workspace', fn (Entorno $e) => $e->workspace->update(['maxHoldPerToken' => 20])],
+        ['POST', '/workspace/test-environment', fn (Entorno $e) => $e->workspace->createTestEnvironment()],
+        ['POST', '/workspace/reset', fn (Entorno $e) => $e->workspace->reset()],
     ];
     foreach ($casos as [$metodo, $ruta, $llamada]) {
         $e = new Entorno([json(200)]);
@@ -140,10 +146,22 @@ prueba('sin cuerpo: ni cuerpo ni Content-Type; cuerpo vacío: {}', function (): 
     igual('{"seconds":1200}', $e->transporte->ultima()['body']);
 });
 
-prueba('null explícito en los cambios se envía (quita la fecha o los precios)', function (): void {
+prueba('null explícito en los cambios se envía (quita la fecha o el cambio de categoría de un objeto)', function (): void {
     $e = new Entorno([json(200)]);
-    $e->events->update('hamlet', ['date' => null, 'pricing' => null, 'name' => 'Función']);
-    igual('{"date":null,"pricing":null,"name":"Función"}', $e->transporte->ultima()['body']);
+    $e->events->update('hamlet', ['date' => null, 'categoryOverridesChanges' => ['Platea-A-1' => null], 'name' => 'Función']);
+    igual('{"date":null,"categoryOverridesChanges":{"Platea-A-1":null},"name":"Función"}', $e->transporte->ultima()['body']);
+});
+
+prueba('los precios ya no se tocan: pricing va tal cual y el servidor responde 400 pricing-not-supported', function (): void {
+    $mensaje = 'Seatsyoo no guarda precios: los pone tu web de venta (pásaselos al visor con la opción pricing)';
+    $e = new Entorno([errorApi(400, 'pricing-not-supported', $mensaje)]);
+    $error = lanza(SeatsyooException::class, fn () => $e->events->update('hamlet', ['pricing' => ['currency' => 'EUR', 'categories' => []]]));
+    // Sin convertir sus mapas vacíos: el SDK ya no sabe nada de precios.
+    igual('{"pricing":{"currency":"EUR","categories":[]}}', $e->transporte->ultima()['body']);
+    igual(400, $error->getStatus());
+    igual('pricing-not-supported', $error->getErrorCode());
+    igual($mensaje, $error->getMessage());
+    igual(1, $e->peticiones(), 'un 400 no se reintenta');
 });
 
 prueba('los mapas vacíos de un evento van como {} (un array de PHP vacío saldría como [])', function (): void {
@@ -152,10 +170,33 @@ prueba('los mapas vacíos de un evento van como {} (un array de PHP vacío saldr
     igual('{"chartKey":"teatro","key":"e1","categoryOverrides":{},"tableModes":{}}', $e->transporte->ultima()['body']);
     $e->events->update('e1', ['tableModes' => [], 'tableModesChanges' => [], 'categoryOverrides' => [], 'categoryOverridesChanges' => []]);
     igual('{"tableModes":{},"tableModesChanges":{},"categoryOverrides":{},"categoryOverridesChanges":{}}', $e->transporte->ultima()['body']);
-    $e->events->update('e1', ['pricing' => ['currency' => 'EUR', 'categories' => [], 'channels' => ['taquilla' => [], 'web' => ['platea' => 30]]]]);
-    igual('{"pricing":{"currency":"EUR","categories":{},"channels":{"taquilla":{},"web":{"platea":30}}}}', $e->transporte->ultima()['body']);
-    $e->events->update('e1', ['pricing' => ['currency' => 'EUR', 'categories' => ['platea' => 30], 'channels' => []]]);
-    igual('{"pricing":{"currency":"EUR","categories":{"platea":30},"channels":{}}}', $e->transporte->ultima()['body']);
+    $e->events->update('e1', ['tableModes' => ['M1' => 'whole'], 'categoryOverrides' => []]);
+    igual('{"tableModes":{"M1":"whole"},"categoryOverrides":{}}', $e->transporte->ultima()['body']);
+});
+
+prueba('los ajustes del espacio: appearance vacío va como {} y allowedOrigins vacío como []', function (): void {
+    $e = new Entorno([json(200), json(200)]);
+    $e->workspace->update(['maxHoldPerToken' => 20, 'allowedOrigins' => [], 'appearance' => []]);
+    igual('{"maxHoldPerToken":20,"allowedOrigins":[],"appearance":{}}', $e->transporte->ultima()['body']);
+    $e->workspace->update(['appearance' => ['color' => '#2563eb']]);
+    igual('{"appearance":{"color":"#2563eb"}}', $e->transporte->ultima()['body']);
+});
+
+prueba('crear el entorno de pruebas, vaciarlo y copiarle un plano no llevan cuerpo y no se reintentan', function (): void {
+    $casos = [
+        fn (Entorno $e) => $e->workspace->createTestEnvironment(),
+        fn (Entorno $e) => $e->workspace->reset(),
+        fn (Entorno $e) => $e->charts->copyToTest('Teatro 1'),
+    ];
+    foreach ($casos as $llamada) {
+        $e = new Entorno([agotado(), json(200)]);
+        lanza(SeatsyooException::class, fn () => $llamada($e));
+        igual(1, $e->peticiones(), 'un solo intento');
+        igual(null, $e->transporte->ultima()['body']);
+    }
+    $e = new Entorno([json(201)]);
+    $e->charts->copyToTest('Teatro 1');
+    igual('/charts/Teatro%201/copy-to-test', $e->transporte->ruta());
 });
 
 prueba('sin objetos es un error antes de llamar', function (): void {

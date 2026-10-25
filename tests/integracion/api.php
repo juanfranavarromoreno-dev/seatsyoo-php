@@ -2,7 +2,7 @@
 
 /**
  * Pruebas contra un servidor de Seatsyoo de verdad (lo levanta tests/ejecutar.mjs en memoria): el plano
- * «teatro» publicado y el evento «hamlet» con precios (preferente 45, platea 30, anfiteatro 20, pista 18).
+ * «teatro» publicado y el evento «hamlet» (sin precios: Seatsyoo no los guarda, los pone la web que vende).
  * Las pruebas van en orden y comparten lo que crean.
  */
 
@@ -71,6 +71,12 @@ prueba('lee el espacio de la clave', function (): void {
     igual('Pruebas PHP', $espacio['name']);
     igual(getenv('SEATSYOO_TEST_PUBLIC_KEY'), $espacio['publicKey']);
     igual([], $espacio['secretKeys']);
+    // Las plazas por comprador del visor: 10 si no se cambian.
+    igual(10, $espacio['maxHoldPerToken']);
+    igual(900, $espacio['holdPeriodSeconds']);
+    igual(false, $espacio['test']);
+    igual(false, $espacio['productionLocked']);
+    igual(getenv('SEATSYOO_TEST_TEST_PUBLIC_KEY'), $espacio['testEnvironment']['publicKey']);
 });
 
 prueba('lista y lee planos y eventos', function (): void {
@@ -82,7 +88,8 @@ prueba('lista y lee planos y eventos', function (): void {
     igual([Api::$evento], array_column(Api::$seatsyoo->events->list(chart: 'teatro')['events'], 'key'));
     $evento = Api::$seatsyoo->events->retrieve(Api::$evento);
     igual('Hamlet', $evento['name']);
-    igual('EUR', $evento['settings']['pricing']['currency']);
+    igual(['keys' => [], 'categories' => []], $evento['settings']['notForSale']);
+    cierto(!array_key_exists('pricing', $evento['settings']), 'el evento no lleva precios');
 });
 
 prueba('crea, cambia y borra un evento', function (): void {
@@ -93,6 +100,13 @@ prueba('crea, cambia y borra un evento', function (): void {
     igual('Función ñ €', $cambiado['name']);
     igual('2026-12-01T20:00:00+01:00', $cambiado['date']);
     igual(null, Api::$seatsyoo->events->update('prueba-crud', ['date' => null])['date']);
+    // Seatsyoo no guarda precios: un cambio con pricing (también null) da 400 pricing-not-supported y no toca nada.
+    foreach ([['currency' => 'EUR', 'categories' => ['platea' => 30]], null] as $precios) {
+        $error = lanza(SeatsyooException::class, fn () => Api::$seatsyoo->events->update('prueba-crud', ['pricing' => $precios, 'name' => 'Otro nombre']));
+        igual(400, $error->getStatus());
+        igual('pricing-not-supported', $error->getErrorCode());
+    }
+    igual('Función ñ €', Api::$seatsyoo->events->retrieve('prueba-crud')['name']);
     $error = lanza(SeatsyooException::class, fn () => Api::$seatsyoo->events->create(['chartKey' => 'teatro', 'key' => 'prueba-crud']));
     igual(409, $error->getStatus());
     igual('key-taken', $error->getErrorCode());
@@ -172,14 +186,13 @@ prueba('repetir la reserva con el mismo pedido no vende otra vez', function (): 
     igual(3, Api::$seatsyoo->events->statuses(Api::$evento)['objects']['Pista']['q']);
 });
 
-prueba('leer el pedido con sus importes', function (): void {
+prueba('leer el pedido: clave, plazas y estado, sin importes', function (): void {
     $pedido = Api::$seatsyoo->events->retrieveOrder(Api::$evento, 'pedido-2001');
     igual('pedido-2001', $pedido['orderId']);
     $porClave = array_column($pedido['objects'], null, 'key');
     igual(['Pista', 'Platea-C-1', 'Platea-C-2'], ordenadas(array_keys($porClave)));
-    igual(['key' => 'Platea-C-1', 'quantity' => 1, 'status' => 'booked', 'amount' => 45], $porClave['Platea-C-1']);
-    igual(3, $porClave['Pista']['quantity']);
-    igual(54, $porClave['Pista']['amount']);
+    igual(['key' => 'Platea-C-1', 'quantity' => 1, 'status' => 'booked'], $porClave['Platea-C-1']);
+    igual(['key' => 'Pista', 'quantity' => 3, 'status' => 'booked'], $porClave['Pista']);
     igual([], Api::$seatsyoo->events->retrieveOrder(Api::$evento, 'pedido que no existe')['objects']);
 });
 
@@ -205,7 +218,6 @@ prueba('devolución parcial de un pedido', function (): void {
     $porClave = array_column(Api::$seatsyoo->events->retrieveOrder(Api::$evento, 'pedido-2001')['objects'], null, 'key');
     igual(['Pista', 'Platea-C-1'], ordenadas(array_keys($porClave)));
     igual(2, $porClave['Pista']['quantity']);
-    igual(36, $porClave['Pista']['amount']);
 });
 
 prueba('repetir una devolución parcial de una butaca da 409 not-in-order', function (): void {
@@ -237,7 +249,7 @@ prueba('mejor disponible: retener con token y reservar con pedido', function ():
     igual(3, count($directo['objects']));
     $pedido = Api::$seatsyoo->events->retrieveOrder(Api::$evento, 'pedido-mejor-2');
     igual(ordenadas($directo['objects']), ordenadas(array_column($pedido['objects'], 'key')));
-    igual([20, 20, 20], array_column($pedido['objects'], 'amount'));
+    igual(['booked', 'booked', 'booked'], array_column($pedido['objects'], 'status'));
 });
 
 prueba('mejor disponible imposible o fuera de margen', function (): void {
@@ -254,6 +266,9 @@ prueba('un objeto con espacios en la clave (Palco 1)', function (): void {
     igual('Palco 1', $palco['key']);
     igual('booth', $palco['kind']);
     igual('free', $palco['status']);
+    // Lo que hace falta para calcular el importe con tus precios: la categoría y las plazas. Sin precio.
+    igual(['preferente', 1], [$palco['category'], $palco['capacity']]);
+    cierto(!array_key_exists('price', $palco), 'sin precio');
     $error = lanza(SeatsyooException::class, fn () => Api::$seatsyoo->events->retrieveObject(Api::$evento, 'Palco 99'));
     igual('not-found', $error->getErrorCode());
 });
@@ -274,6 +289,22 @@ prueba('un estado propio y el historial de cambios', function (): void {
     igual(['Platea-C-1'], array_values(array_unique(array_column($deUno, 'key'))));
     igual(['free', 'booked', 'held'], array_column($deUno, 'status'));
     igual('api', $deUno[0]['origin']);
+});
+
+prueba('las marcas: un estado propio que cuelga de «libre»', function (): void {
+    // El catálogo de estados propios va con request() (POST /statuses).
+    $estado = Api::$seatsyoo->request('POST', '/statuses', ['name' => 'Visibilidad reducida', 'color' => '#f59e0b', 'base' => 'free']);
+    igual('visibilidad-reducida', $estado['key']);
+    igual([], Api::$seatsyoo->events->marks(Api::$evento)['marks']);
+    Api::$seatsyoo->events->changeStatus(Api::$evento, ['Platea-G-1', 'Platea-G-2'], 'visibilidad-reducida');
+    igual(['Platea-G-1' => 'visibilidad-reducida', 'Platea-G-2' => 'visibilidad-reducida'], Api::$seatsyoo->events->marks(Api::$evento)['marks']);
+    // La plaza marcada sigue libre y se vende.
+    Api::$seatsyoo->events->book(Api::$evento, ['Platea-G-1'], orderId: 'pedido-marcado');
+    igual('booked', Api::$seatsyoo->events->statuses(Api::$evento)['objects']['Platea-G-1']['s']);
+    Api::$seatsyoo->events->changeStatus(Api::$evento, ['Platea-G-2'], 'free');
+    cierto(!isset(Api::$seatsyoo->events->marks(Api::$evento)['marks']['Platea-G-2']), '"free" quita la marca');
+    $error = lanza(SeatsyooException::class, fn () => Api::$seatsyoo->events->marks('no-existe'));
+    igual(404, $error->getStatus());
 });
 
 prueba('sacar de la venta y volver a poner', function (): void {
@@ -346,9 +377,10 @@ prueba('los avisos llegan al receptor y se verifican con Webhook::verify', funct
     $datos = $reserva['aviso']['data'];
     igual(Api::$evento, $datos['event']['key']);
     igual(['Pista', 'Platea-C-1', 'Platea-C-2'], ordenadas(array_column($datos['objects'], 'key')));
-    igual(144, $datos['total']);
-    igual('EUR', $datos['currency']);
+    igual('booked', $datos['status']);
+    cierto(!array_key_exists('total', $datos) && !array_key_exists('currency', $datos), 'el aviso no trae importes');
     igual('api', $datos['origin']);
+    cierto(!array_key_exists('test', $reserva['aviso']), 'un aviso de producción no lleva test');
     igual(getenv('SEATSYOO_TEST_PUBLIC_KEY'), $reserva['aviso']['workspace']);
 
     // La misma verificación aquí, con el cuerpo y la cabecera tal cual llegaron (con margen: puede haber tardado).

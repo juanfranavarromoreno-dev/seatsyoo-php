@@ -11,17 +11,17 @@ use Seatsyoo\Webhook;
 grupo('Webhook::verify');
 
 // Un aviso firmado por el servidor de Seatsyoo (la firma se calculó aparte, con el HMAC de Node).
-const CUERPO = '{"id":"evt_8ad83f30-3215-45a8-8289-7a0c81a67766","type":"objects.booked","createdAt":"2026-10-16T14:40:58.868Z","workspace":"pk_prueba","data":{"event":{"key":"hamlet","name":"Hamlet"},"objects":[{"key":"Platea-D-5","quantity":1,"price":30,"amount":30}],"status":"booked","orderId":"pedido-3001","origin":"api","seq":12,"total":30,"currency":"EUR","nota":"Función ñ €"}}';
+const CUERPO = '{"id":"evt_8ad83f30-3215-45a8-8289-7a0c81a67766","type":"objects.booked","createdAt":"2026-10-16T14:40:58.868Z","workspace":"pk_prueba","data":{"event":{"key":"hamlet","name":"Hamlet"},"objects":[{"key":"Platea-D-5","quantity":2}],"status":"booked","orderId":"pedido-3001","origin":"api","seq":12,"nota":"Función ñ €"}}';
 const SECRETO = 'whsec_prueba_de_firma';
 const HORA = 1792161658;
-const FIRMA = '6fb02caa981a459700d6b66493e546b956448779c804e14772f51f691951cad1';
+const FIRMA = 'd4cca8c2c87d8908a241370a5ecf2c42e7285f0b5cda245767aec7eff6ee2137';
 
 prueba('acepta un aviso bien firmado y lo devuelve decodificado', function (): void {
     $aviso = Webhook::verify(CUERPO, 't=' . HORA . ',v1=' . FIRMA, SECRETO, 300, HORA + 5);
     igual('objects.booked', $aviso['type']);
     igual('pedido-3001', $aviso['data']['orderId']);
     igual('Función ñ €', $aviso['data']['nota']);
-    igual(30, $aviso['data']['objects'][0]['amount']);
+    igual(2, $aviso['data']['objects'][0]['quantity']);
 });
 
 prueba('firma como el servidor (mismo HMAC que Node)', function (): void {
@@ -50,7 +50,7 @@ prueba('rechaza un secreto equivocado', function (): void {
 });
 
 prueba('rechaza un cuerpo cambiado', function (): void {
-    $cambiado = str_replace('"amount":30', '"amount":0', CUERPO);
+    $cambiado = str_replace('"quantity":2', '"quantity":1', CUERPO);
     lanza(SignatureVerificationException::class, fn () => Webhook::verify($cambiado, 't=' . HORA . ',v1=' . FIRMA, SECRETO, 300, HORA));
 });
 

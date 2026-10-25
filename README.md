@@ -1,7 +1,8 @@
 # Seatsyoo para PHP
 
 SDK de servidor de Seatsyoo para PHP: crea y consulta eventos, retén y reserva butacas con tu número de
-pedido, devuélvelas, busca las mejores disponibles, vende abonos de temporada y verifica los webhooks.
+pedido, devuélvelas, busca las mejores disponibles, vende abonos de temporada, prepara y vacía tu entorno de
+pruebas y verifica los webhooks.
 
 - PHP 8.1 o posterior, sin dependencias. Usa la extensión curl si está; si no, los flujos de PHP (para
   https sin curl hace falta openssl).
@@ -9,6 +10,8 @@ pedido, devuélvelas, busca las mejores disponibles, vende abonos de temporada y
   la API (`/docs/api` en la documentación de Seatsyoo).
 - Los errores son excepciones con el código estable de la API; las peticiones que es seguro repetir se
   reintentan solas.
+- Seatsyoo no guarda precios: los pones tú, en tu web, por categoría. Se los pasas al visor (opción `pricing`)
+  para que los enseñe y con ellos calculas lo que cobras ([Precios](#precios)).
 
 *English summary below.*
 
@@ -34,27 +37,42 @@ $evento = $seatsyoo->events->retrieve('hamlet-2026-11-20');
 ```
 
 La clave secreta da acceso de administración a tu espacio: úsala solo en tu servidor, nunca en tu web ni en
-tu repositorio. Opciones del cliente: `timeout` (segundos por intento, con el cuerpo entero; 30 por
-defecto), `maxRetries` (reintentos, 2 por defecto; 0 para ninguno) y `transport` (ver
+tu repositorio. Con una clave de tu entorno de pruebas (`sk_test_…`) todo funciona igual, pero sobre él
+([Entorno de pruebas](#entorno-de-pruebas)). Opciones del cliente: `timeout` (segundos por intento, con el
+cuerpo entero; 30 por defecto), `maxRetries` (reintentos, 2 por defecto; 0 para ninguno) y `transport` (ver
 [Transporte propio](#transporte-propio)).
 
 ## Vender
 
-El comprador elige sus butacas en el visor, que las retiene con su token de retención; tu web te manda el
-token y lo que eligió, cobras y reservas desde tu servidor con tu número de pedido:
+El comprador elige sus butacas en el visor, que las retiene con su token de retención. La venta se hace en dos
+momentos:
+
+1. **En la caja**, tu web te manda solo el token. Tu servidor pregunta qué retiene ese token
+   (`events->statuses()` con `holdToken`: lo suyo viene con `mine`), calcula el importe con tus precios y
+   guarda esa lista con el pedido. Es lo que cobras.
+2. **Con el pago confirmado**, reserva exactamente la lista guardada, con tu número de pedido, sin volver a
+   preguntar.
 
 ```php
 use Seatsyoo\SeatsyooException;
 
-$objetos = ['Platea-C-1', 'Platea-C-2', ['key' => 'Pista', 'quantity' => 3]];   // en una zona de pie, con cantidad
-
-// Antes de cobrar, amplía la retención para que no caduque a mitad del pago.
+// 1. En la caja: lo que retiene el token es lo que se cobra.
+$objetos = [];
+foreach ($seatsyoo->events->statuses($evento, holdToken: $holdToken)['objects'] as $clave => $estado) {
+    if (($estado['mine'] ?? false) === true) {
+        // Siempre con la cantidad (mq: las plazas del token en una zona de pie; si no viene, 1).
+        $objetos[] = ['key' => (string) $clave, 'quantity' => $estado['mq'] ?? 1];
+    }
+}
+$importe = …;   // con tus precios (ver Precios)
+// Guarda $objetos y $importe con tu pedido, y amplía la retención para que no caduque a mitad del pago.
 $seatsyoo->holdTokens->extend($holdToken, seconds: 600);
 
 // … cobra …
 
+// 2. Con el pago confirmado: la lista guardada, tal cual.
 try {
-    $seatsyoo->events->book('hamlet-2026-11-20', $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
+    $seatsyoo->events->book($evento, $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
 } catch (SeatsyooException $e) {
     if ($e->getErrorCode() !== 'objects-not-available') {
         throw $e;
@@ -64,24 +82,70 @@ try {
     }
 }
 
-// Lo vendido con ese pedido, con el importe de cada objeto si el evento tiene precios.
-$pedido = $seatsyoo->events->retrieveOrder('hamlet-2026-11-20', 'pedido-2001');
+// Lo vendido con ese pedido: clave, plazas y estado de cada objeto. Compáralo con lo que cobraste.
+$pedido = $seatsyoo->events->retrieveOrder($evento, 'pedido-2001');
 
 // Devolver una parte del pedido o el pedido entero.
-$seatsyoo->events->refund('hamlet-2026-11-20', 'pedido-2001', ['Platea-C-2', ['key' => 'Pista', 'quantity' => 1]]);
-$seatsyoo->events->refund('hamlet-2026-11-20', 'pedido-2001');
+$seatsyoo->events->refund($evento, 'pedido-2001', [['key' => 'Platea-C-2', 'quantity' => 1]]);
+$seatsyoo->events->refund($evento, 'pedido-2001');
 ```
+
+Por qué así: `book()` reserva los objetos que le pidas, los retenidos con el token y también los libres, así
+que si reservaras la lista que manda el navegador, alguien podría añadir butacas que no ha elegido. Y entre la
+caja y el pago el comprador puede seguir reteniendo con el mismo token: si volvieras a preguntar al confirmarse
+el pago, reservarías más de lo cobrado (lo que retenga de más caduca solo). Por eso cada objeto va con su
+cantidad: en una zona de pie, reservar sin cantidad reserva lo que el token tenga allí en ese momento. La caja
+entera, con el importe y la comprobación de que lo vendido es lo cobrado, está en
+[`ejemplo/tienda.php`](ejemplo/tienda.php).
 
 Las acciones son todo o nada: si un objeto no se puede, no se toca ninguno. Con `orderId`, repetir la
 reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias. El número de
-pedido no puede ser `''` (lanza `InvalidArgumentException`): para «sin pedido», `null`.
+pedido lo pone tu tienda, nunca el comprador, y no puede ser `''` (lanza `InvalidArgumentException`): para
+«sin pedido», `null`.
 
-Las mejores butacas libres juntas, retenidas con un token o reservadas directamente:
+Las mejores butacas libres juntas, retenidas con un token o reservadas directamente (de 1 a 100):
 
 ```php
 $r = $seatsyoo->events->bestAvailable('hamlet-2026-11-20', 2, categories: ['platea'], holdToken: $holdToken);
 // $r['objects'] = ['Platea-F-7', 'Platea-F-8'], $r['contiguous'] = true
 ```
+
+## Precios
+
+Seatsyoo no guarda precios: los pone la web que vende. Los eventos, los pedidos y los avisos no llevan
+importes, y `events->update()` con `pricing` da `400 pricing-not-supported`. Ten tus precios por clave de
+categoría (las de tu plano), pásaselos al visor con su opción `pricing` para que los enseñe y calcula lo que
+cobras en tu servidor, con la categoría y las plazas de cada objeto:
+
+```php
+$precios = ['preferente' => 45, 'platea' => 30, 'mesas' => 35, 'pista' => 18];
+$importe = 0;
+foreach ($objetos as $objeto) {
+    $info = $seatsyoo->events->retrieveObject($evento, $objeto['key']);
+    // Por plaza: una mesa que se vende entera cuenta todas sus sillas.
+    $plazas = $info['kind'] === 'area' ? $objeto['quantity'] : $objeto['quantity'] * $info['capacity'];
+    $importe += ($precios[$info['category']] ?? 0) * $plazas;
+}
+```
+
+## Plazas por comprador
+
+Desde el visor, cada comprador (cada token) retiene a la vez como mucho las «plazas por comprador» del espacio
+en cada evento: `maxHoldPerToken`, 10 si no lo cambias (de 1 a 500; una mesa o un palco enteros cuentan todas
+sus plazas). Lo da `workspace->retrieve()` y se cambia con `workspace->update(['maxHoldPerToken' => 20])` o en
+el panel. Esos topes son del visor, que usa la clave pública, y los errores que dan solo le llegan a él (a tu
+web, en `onError` del visor), nunca a este SDK:
+
+| Código | Qué pasa |
+| --- | --- |
+| `409 hold-limit` | El token ya tiene las plazas que admite el espacio en ese evento (en «mejor disponible», pedir más que ese tope). |
+| `409 hold-limit-ip` | Los tokens creados por el visor desde esa conexión (IP) ya retienen lo que admite una conexión en ese evento. |
+| `429 hold-rate-limited` | Desde esa conexión se han retenido demasiadas plazas en poco tiempo (con `Retry-After`). |
+
+Con la clave secreta no hay ese tope: tu servidor retiene y reserva lo que necesite, y pide «mejor disponible»
+hasta 100. Si creas el token en tu servidor (`holdTokens->create()`) y se lo pasas al visor, ese token no cuenta
+para los topes por conexión; el de plazas por comprador sí, y cuenta también lo que retengas con él desde tu
+servidor.
 
 ## Errores
 
@@ -90,12 +154,22 @@ Todo lo que falla en una petición lanza `Seatsyoo\SeatsyooException`:
 | Método | Qué da |
 | --- | --- |
 | `getStatus()` | El código HTTP; 0 si no hubo respuesta. |
-| `getErrorCode()` | El código del error, estable: `objects-not-available`, `not-found`, `hold-token-expired`…; sin respuesta, `network-error` o `timeout`. |
+| `getErrorCode()` | El código del error, estable: `objects-not-available`, `not-found`, `hold-token-expired`, `pricing-not-supported`…; sin respuesta, `network-error` o `timeout`. |
 | `getMessage()` | Una explicación para personas, en español. Puede cambiar: no la compares. |
 | `getDetails()` | Los detalles, si los hay: en `objects-not-available`, `[['key' => …, 'reason' => …]]`. |
 
-Los códigos están en la página de errores de la documentación (`/docs/errores`). Un error de programación (una clave vacía, una
-lista de objetos vacía) lanza `InvalidArgumentException` antes de llamar a la API.
+Los códigos están en la página de errores de la documentación (`/docs/errores`). Algunos que conviene tener a mano:
+
+- `400 pricing-not-supported`: has mandado `pricing` al cambiar un evento; Seatsyoo no guarda precios
+  ([Precios](#precios)).
+- `403 production-locked`: la producción del espacio aún no está activa (faltan los datos fiscales en el
+  panel); mientras, usa las claves del entorno de pruebas.
+- `409 production-only`: eso se hace con la clave de producción, no con una `sk_test_…`.
+- `409 not-test-environment`: `workspace->reset()` con la clave de producción; solo se vacía un entorno de
+  pruebas.
+
+Un error de programación (una clave vacía, una lista de objetos vacía) lanza `InvalidArgumentException` antes de
+llamar a la API.
 
 ## Reintentos
 
@@ -126,6 +200,28 @@ $r = $seatsyoo->events->book('hamlet-2026-11-20', $objetos, holdToken: $holdToke
 // $r['objects']: lo reservado, también tras un reintento; !empty($r['retried']) si hubo que repetirla.
 ```
 
+## Entorno de pruebas
+
+Cada espacio tiene su entorno de pruebas, con sus propias claves (`pk_test_…` y `sk_test_…`): con una
+`sk_test_…`, el cliente funciona igual pero sobre él, nada se factura y sus datos se quedan hasta que lo vacías.
+
+```php
+// Con la clave de producción: su clave pública y, al copiarle un plano, la misma clave de plano en pruebas.
+$entorno = $seatsyoo->workspace->createTestEnvironment();   // ['publicKey' => 'pk_test_…', 'createdAt' => …]
+$seatsyoo->charts->copyToTest('teatro-ejemplo');            // la última versión publicada, publicada también en pruebas
+
+// Con la clave de pruebas: vende como en producción y, al acabar tus pruebas, vacíalo.
+$pruebas = new Client(secretKey: (string) getenv('SEATSYOO_TEST_SECRET_KEY'), server: 'https://tu-servidor-de-seatsyoo');
+$pruebas->events->create(['chartKey' => 'teatro-ejemplo', 'key' => 'ensayo']);
+$pruebas->workspace->reset();   // ['ok' => true, 'deleted' => ['events' => 1, 'seasons' => 0]]
+```
+
+Todo espacio nace con su entorno de pruebas, así que `createTestEnvironment()` suele responder sin clave
+secreta: créala en el panel, dentro de pruebas (Ajustes → Integración). `reset()` borra sus eventos y temporadas
+con sus ventas, retenciones e historial, y sus tokens; conserva los planos, las claves, los webhooks y los
+ajustes, y no manda avisos. Con la clave de producción da `409 not-test-environment`: así no se borra nada de
+verdad. Los avisos de los webhooks del entorno de pruebas llevan `'test' => true`.
+
 ## Webhooks
 
 Verifica cada aviso antes de hacer nada con él. `Webhook::verify()` comprueba la firma de la cabecera
@@ -147,7 +243,7 @@ try {
 }
 
 http_response_code(200);   // contesta enseguida y trabaja después
-// $aviso['id'], $aviso['type'] (objects.booked, objects.released…), $aviso['data']
+// $aviso['id'], $aviso['type'] (objects.booked, objects.released…), $aviso['data'] (sin importes)
 ```
 
 En Laravel, el cuerpo es `$request->getContent()` y la firma `$request->header('Seatsyoo-Signature')`; en
@@ -161,7 +257,7 @@ dos veces: guarda los `id` que ya has procesado. Para probar tu receptor sin esp
 $seatsyoo->events->list(chart: null)
 $seatsyoo->events->create(['chartKey' => …, 'key' => …, 'name' => …, 'date' => …])
 $seatsyoo->events->retrieve($evento)
-$seatsyoo->events->update($evento, ['name' => …, 'date' => null, 'pricing' => …])
+$seatsyoo->events->update($evento, ['name' => …, 'date' => null, 'categoryOverridesChanges' => […]])
 $seatsyoo->events->delete($evento, force: false)
 $seatsyoo->events->hold($evento, $objetos, holdToken: …, channelKeys: null, ignoreChannels: null)
 $seatsyoo->events->book($evento, $objetos, holdToken: null, orderId: null, channelKeys: null, ignoreChannels: null)
@@ -173,6 +269,7 @@ $seatsyoo->events->statuses($evento, holdToken: null)
 $seatsyoo->events->retrieveObject($evento, $objeto)
 $seatsyoo->events->retrieveOrder($evento, $orderId)
 $seatsyoo->events->statusChanges($evento, limit: null, before: null, object: null)
+$seatsyoo->events->marks($evento)
 $seatsyoo->events->markNotForSale($evento, keys: null, categories: null)
 $seatsyoo->events->markForSale($evento, keys: null, categories: null)
 
@@ -185,12 +282,13 @@ $seatsyoo->seasons->addEvents($temporada, eventKeys: null, events: null) · remo
 $seatsyoo->seasons->statuses($temporada, holdToken: null, events: null)
 $seatsyoo->seasons->hold / book / release / refund / changeStatus / bestAvailable   // como en events, con events: [...] para un abono parcial
 
-$seatsyoo->charts->list(archived: false, q: null) · retrieve($plano)
+$seatsyoo->charts->list(archived: false, q: null) · retrieve($plano) · copyToTest($plano)
 
 $seatsyoo->webhooks->list() · create(['url' => …, 'types' => […]]) · update($webhook, […]) · delete($webhook)
 $seatsyoo->webhooks->test($webhook) · deliveries($webhook, limit: null) · retryDelivery($webhook, $id)
 
-$seatsyoo->workspace->retrieve()
+$seatsyoo->workspace->retrieve() · update(['maxHoldPerToken' => …, 'holdPeriodSeconds' => …, 'allowedOrigins' => […]])
+$seatsyoo->workspace->createTestEnvironment() · reset()
 
 \Seatsyoo\Webhook::verify($cuerpo, $firma, $secreto, tolerance: 300)
 \Seatsyoo\Webhook::signatureHeader($cuerpo, $secreto, timestamp: null)
@@ -201,7 +299,7 @@ Las claves que van en la ruta (evento, objeto, pedido…) se codifican para URL 
 
 ## Otras rutas
 
-Para cualquier otra ruta de `/api/v1` (informes, canales de venta, planos…), `request()`, con la misma
+Para cualquier otra ruta de `/api/v1` (informes, canales de venta, estados propios, planos…), `request()`, con la misma
 autenticación, errores y reintentos (solo de `GET`, `PUT` y `DELETE`). Devuelve el JSON como array o, si la
 respuesta no es JSON (los `.csv`), el texto:
 
@@ -209,12 +307,15 @@ respuesta no es JSON (los `.csv`), el texto:
 $resumen = $seatsyoo->request('GET', '/events/hamlet-2026-11-20/report/summary');
 $csv = $seatsyoo->request('GET', '/events/hamlet-2026-11-20/report/orders.csv', query: ['sep' => ';']);
 $seatsyoo->request('POST', '/events/hamlet-2026-11-20/channels', ['name' => 'Taquilla', 'color' => '#e0a526']);
+// Un estado propio que marca plazas que siguen libres (base free); las marcas se leen con events->marks().
+$seatsyoo->request('POST', '/statuses', ['name' => 'Visibilidad reducida', 'color' => '#f59e0b', 'base' => 'free']);
 ```
 
 Aquí las claves de la ruta las codificas tú, con `rawurlencode()`. Y un campo que la API espera como objeto
 (`{"clave": valor}`) y está vacío va como `(object) []` o `new \stdClass()`: un array de PHP vacío sale como
 lista (`[]`) y la API responde `400`. (En `events->create()` y `events->update()` el SDK ya lo hace por ti con
-`tableModes`, `categoryOverrides`, sus `…Changes` y los precios.) La respuesta de `request()` va tal cual:
+`tableModes`, `categoryOverrides` y sus `…Changes`, y en `workspace->update()` con `appearance`.) La respuesta de
+`request()` va tal cual:
 un `DELETE` repetido puede dar `404` aunque el primer intento borrara.
 
 ## Transporte propio
@@ -236,8 +337,11 @@ $seatsyoo = new Client(secretKey: …, server: …, transport: new MiTransporte(
 
 ## Ejemplos
 
-- [`ejemplo/compra.php`](ejemplo/compra.php): una compra de principio a fin (retener, reservar con número de
-  pedido, consultar y devolver).
+- [`ejemplo/tienda.php`](ejemplo/tienda.php): la caja de una tienda. En la caja, lo que retiene el token, el
+  importe con tus precios y la lista guardada con el pedido; con el pago confirmado, la reserva de esa lista;
+  y la comprobación de que lo vendido es lo cobrado.
+- [`ejemplo/compra.php`](ejemplo/compra.php): una compra de principio a fin con esa caja (retener, cobrar lo
+  retenido, reservar con número de pedido, consultar y devolver).
 - [`ejemplo/webhook.php`](ejemplo/webhook.php): un receptor de webhooks en PHP plano.
 
 ## Pruebas
@@ -268,6 +372,19 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
 - Every method returns the API response as an associative array, exactly as documented in the API reference.
 - Resources: `events`, `holdTokens`, `seasons`, `charts`, `webhooks`, `workspace`, plus `request($method, $path,
   $body, $query)` for any other `/api/v1` route. Keys in paths are URL-encoded for you.
+- Seatsyoo stores no prices: your website sets them per category, passes them to the viewer (`pricing` option)
+  and computes the amount from each object's category and capacity (`events->retrieveObject()`). Events, orders
+  and webhooks carry no amounts, and `events->update()` with `pricing` fails with `400 pricing-not-supported`.
+- Selling in two steps: at checkout, ask what the hold token holds (`events->statuses()` with `holdToken`, the
+  `mine` entries, always with a quantity: `mq` or 1), charge for that list and store it with the order; once paid,
+  book exactly the stored list with your `orderId`. Never book the list the browser sends. See
+  `ejemplo/tienda.php`.
+- The viewer's per-buyer cap (`maxHoldPerToken`, 10 by default; `409 hold-limit`, `409 hold-limit-ip`,
+  `429 hold-rate-limited`) applies to the public API only, never to the secret key; read it with
+  `workspace->retrieve()` and change it with `workspace->update()`.
+- Test environment: `sk_test_…` keys work the same on it; `workspace->createTestEnvironment()`,
+  `charts->copyToTest($chart)` and `workspace->reset()` (test keys only; `409 not-test-environment` with a
+  production key). `events->marks($event)` reads the marks (custom statuses based on free).
 - Errors throw `Seatsyoo\SeatsyooException` with `getStatus()` (0 when there was no response),
   `getErrorCode()` (stable API code, or `network-error` / `timeout`) and `getDetails()`.
 - Retries (network errors, timeouts, 429 honouring `Retry-After` up to 60 s, 502/503/504, exponential backoff
@@ -276,9 +393,10 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   `'retried' => true`; a repeated booking that comes back unchanged still lists the requested keys in
   `objects` (with `seq` 0), and a repeated delete answered with `404 not-found` counts as done. An empty
   `orderId` (`''`) throws `InvalidArgumentException`. `timeout` covers the whole request, body included.
-- Empty JSON objects: `events->create()`/`update()` send empty maps as `{}`; with `request()`, pass
-  `(object) []` for an empty object.
+- Empty JSON objects: `events->create()`/`update()` and `workspace->update()` send empty maps as `{}`; with
+  `request()`, pass `(object) []` for an empty object.
 - `Webhook::verify()` checks the `Seatsyoo-Signature` header (`t=<seconds>,v1=<hex>`, HMAC-SHA256 of
   `"<t>.<raw body>"`), accepts several `v1` values, compares in constant time, rejects anything outside the
   tolerance and returns the decoded event, or throws `Seatsyoo\SignatureVerificationException`.
-- Examples in `ejemplo/` (a full purchase and a plain-PHP webhook receiver). License: MIT.
+- Examples in `ejemplo/` (a checkout that books what it charged, a full purchase and a plain-PHP webhook
+  receiver). License: MIT.

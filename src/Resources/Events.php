@@ -10,6 +10,9 @@ namespace Seatsyoo\Resources;
  * Los objetos se indican con su clave («Platea-C-1») o, en una zona de pie, con su clave y cantidad
  * (['key' => 'Pista', 'quantity' => 3]). Las acciones son todo o nada: si un objeto no se puede, no se toca
  * ninguno y se lanza una SeatsyooException 409 objects-not-available con el motivo de cada uno en getDetails().
+ *
+ * Los eventos no tienen precios: los pone tu web, que se los pasa al visor (opción pricing) y cobra con ellos.
+ * Para calcular un importe, retrieveObject() da la categoría y las plazas de cada objeto.
  */
 class Events extends ApiResource
 {
@@ -45,9 +48,10 @@ class Events extends ApiResource
     }
 
     /**
-     * Cambia un evento: key, name, date (null la quita), tableModes, tableModesChanges, categoryOverrides,
-     * categoryOverridesChanges o pricing (null quita los precios). Los mapas «clave => valor» vacíos (también
-     * pricing.categories y pricing.channels) se envían como {}.
+     * Cambia un evento: key, name, date (null la quita), tableModes, tableModesChanges, categoryOverrides o
+     * categoryOverridesChanges. Los mapas «clave => valor» vacíos se envían como {}.
+     *
+     * Los eventos no guardan precios: un cambio con pricing da 400 pricing-not-supported.
      *
      * @param array<string, mixed> $changes
      *
@@ -56,13 +60,6 @@ class Events extends ApiResource
     public function update(string $event, array $changes): array
     {
         $changes = self::maps($changes, ['tableModes', 'tableModesChanges', 'categoryOverrides', 'categoryOverridesChanges']);
-        if (isset($changes['pricing']) && is_array($changes['pricing'])) {
-            $pricing = self::maps($changes['pricing'], ['categories', 'channels']);
-            if (isset($pricing['channels']) && is_array($pricing['channels'])) {
-                $pricing['channels'] = self::maps($pricing['channels'], array_map('strval', array_keys($pricing['channels'])));
-            }
-            $changes['pricing'] = $pricing;
-        }
 
         return $this->http->json('PATCH', '/events/' . self::key($event), $changes);
     }
@@ -83,6 +80,10 @@ class Events extends ApiResource
 
     /**
      * Retiene objetos con un token de retención.
+     *
+     * Con la clave secreta no hay tope de plazas por token, pero lo que retengas con un token cuenta para el del
+     * visor (las plazas por comprador del espacio, maxHoldPerToken) si después se lo pasas: el visor no podrá
+     * retener más allá de ese tope (409 hold-limit).
      *
      * @param list<string|array{key: string, quantity?: int}> $objects
      * @param list<string>|null                               $channelKeys Canales desde los que se compra.
@@ -199,7 +200,8 @@ class Events extends ApiResource
     /**
      * Busca las mejores butacas libres juntas y las retiene (con $holdToken) o las reserva (sin él).
      *
-     * @param int               $number     Cuántas, de 1 a 100.
+     * @param int               $number     Cuántas, de 1 a 100 (el visor, además, nunca más que maxHoldPerToken; la
+     *                                      clave secreta no tiene ese tope).
      * @param list<string>|null $categories Solo de estas categorías.
      * @param bool|null         $accessible true: solo butacas accesibles.
      * @param bool|null         $allowSplit true: si no hay tantas juntas, las más cercanas aunque estén separadas.
@@ -239,7 +241,9 @@ class Events extends ApiResource
     }
 
     /**
-     * Todo sobre un objeto en el evento: tipo, categoría, estado, precio y cada asignación con su pedido.
+     * Todo sobre un objeto en el evento: tipo (kind), rótulos, categoría, plazas (capacity), estado, plazas
+     * ocupadas, si está a la venta, su canal y cada asignación con su pedido. Con la categoría y las plazas
+     * calculas el importe con tus precios (una mesa que se vende entera cuenta todas sus sillas).
      *
      * @return array<string, mixed>
      */
@@ -249,14 +253,25 @@ class Events extends ApiResource
     }
 
     /**
-     * Lo vendido con un número de pedido (con el importe de cada objeto si el evento tiene precios). Si no hay
-     * nada (no existe o ya se devolvió), "objects" vacío.
+     * Lo vendido con un número de pedido: clave, plazas (quantity) y estado de cada objeto. Si no hay nada (no
+     * existe o ya se devolvió), "objects" vacío. Sin importes: lo cobrado lo tienes tú con el pedido.
      *
-     * @return array{orderId: string, objects: list<array<string, mixed>>}
+     * @return array{orderId: string, objects: list<array{key: string, quantity: int, status: string}>}
      */
     public function retrieveOrder(string $event, string $orderId): array
     {
         return $this->http->json('GET', '/events/' . self::key($event) . '/orders/' . self::key($orderId, 'El número de pedido'));
+    }
+
+    /**
+     * Las marcas del evento: plazas con un estado propio que cuelga de «libre» (visibilidad reducida, junto al
+     * pasillo…). Siguen libres y se pueden vender; se ponen con changeStatus() y "free" las quita.
+     *
+     * @return array{marks: array<string, string>} Clave del objeto => clave del estado.
+     */
+    public function marks(string $event): array
+    {
+        return $this->http->json('GET', '/events/' . self::key($event) . '/marks');
     }
 
     /**

@@ -76,10 +76,27 @@ prueba('las rutas que no son JSON (CSV) devuelven el texto con request()', funct
 });
 
 prueba('las respuestas JSON se devuelven como arrays asociativos', function (): void {
-    $e = new Entorno([json(200, ['key' => 'hamlet', 'settings' => ['pricing' => ['currency' => 'EUR', 'categories' => ['platea' => 30.5]]]])]);
+    $e = new Entorno([json(200, ['key' => 'hamlet', 'settings' => ['categoryOverrides' => ['Platea-A-1' => 'preferente']]]), json(200, ['occupancy' => 0.8])]);
     $evento = $e->events->retrieve('hamlet');
     igual('hamlet', $evento['key']);
-    igual(30.5, $evento['settings']['pricing']['categories']['platea']);
+    igual('preferente', $evento['settings']['categoryOverrides']['Platea-A-1']);
+    igual(0.8, $e->http->request('GET', '/reports/events')['occupancy']);
+});
+
+prueba('los errores de los precios y del entorno de pruebas llegan con su código y no se reintentan', function (): void {
+    $casos = [
+        [400, 'pricing-not-supported', fn (Entorno $e) => $e->events->update('hamlet', ['pricing' => null])],
+        [403, 'production-locked', fn (Entorno $e) => $e->events->list()],
+        [409, 'production-only', fn (Entorno $e) => $e->workspace->createTestEnvironment()],
+        [409, 'not-test-environment', fn (Entorno $e) => $e->workspace->reset()],
+        [409, 'test-environment-missing', fn (Entorno $e) => $e->charts->copyToTest('teatro')],
+    ];
+    foreach ($casos as [$estado, $codigo, $llamada]) {
+        $e = new Entorno([errorApi($estado, $codigo, 'Mensaje')]);
+        $error = lanza(SeatsyooException::class, fn () => $llamada($e));
+        igual([$estado, $codigo, null], [$error->getStatus(), $error->getErrorCode(), $error->getDetails()], $codigo);
+        igual(1, $e->peticiones(), $codigo);
+    }
 });
 
 prueba('una respuesta vacía es un array vacío', function (): void {

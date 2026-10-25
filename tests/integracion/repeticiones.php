@@ -32,10 +32,12 @@ prueba('mapas vacíos al crear y cambiar un evento (antes, 400 «expected record
     $evento = $seatsyoo->events->create(['chartKey' => 'teatro', 'key' => EVENTO_REP, 'name' => 'Repeticiones', 'categoryOverrides' => [], 'tableModes' => []]);
     igual(EVENTO_REP, $evento['key']);
     $seatsyoo->events->update(EVENTO_REP, ['categoryOverridesChanges' => [], 'tableModesChanges' => [], 'categoryOverrides' => [], 'tableModes' => []]);
-    $evento = $seatsyoo->events->update(EVENTO_REP, ['pricing' => ['currency' => 'EUR', 'categories' => [], 'channels' => []]]);
-    igual([], (array) $evento['settings']['pricing']['categories']);
-    $evento = $seatsyoo->events->update(EVENTO_REP, ['pricing' => ['currency' => 'EUR', 'categories' => ['platea' => 30, 'preferente' => 45, 'pista' => 18]]]);
-    igual(30, $evento['settings']['pricing']['categories']['platea']);
+    $evento = $seatsyoo->events->update(EVENTO_REP, ['categoryOverridesChanges' => ['Platea-A-1' => 'preferente'], 'tableModesChanges' => ['M2' => 'whole']]);
+    igual(['Platea-A-1' => 'preferente'], $evento['settings']['categoryOverrides']);
+    igual(['M2' => 'whole'], $evento['settings']['tableModes']);
+    $evento = $seatsyoo->events->update(EVENTO_REP, ['categoryOverrides' => [], 'tableModes' => []]);
+    igual([], $evento['settings']['categoryOverrides']);
+    igual([], $evento['settings']['tableModes']);
 });
 
 prueba('un número de pedido vacío no llega al servidor (ni vende dos veces en una zona de pie)', function (): void {
