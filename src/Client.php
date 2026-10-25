@@ -8,6 +8,7 @@ use Seatsyoo\Http\CurlTransport;
 use Seatsyoo\Http\Requester;
 use Seatsyoo\Http\StreamTransport;
 use Seatsyoo\Http\Transport;
+use Seatsyoo\Resources\Account;
 use Seatsyoo\Resources\Charts;
 use Seatsyoo\Resources\Events;
 use Seatsyoo\Resources\HoldTokens;
@@ -28,7 +29,7 @@ use Seatsyoo\Resources\Workspace;
  */
 class Client
 {
-    public const VERSION = '1.1.0';
+    public const VERSION = '1.2.0';
 
     /** Eventos y la venta: retener, reservar, devolver, mejor disponible, estados y pedidos. */
     public readonly Events $events;
@@ -43,10 +44,13 @@ class Client
     /** El espacio de la clave y su entorno de pruebas. */
     public readonly Workspace $workspace;
 
+    /** Con una clave de cuenta (ak_…): los espacios de tus clientes. */
+    public readonly Account $account;
+
     private Requester $http;
 
     /**
-     * @param string         $secretKey  La clave secreta del espacio (sk_…).
+     * @param string         $secretKey  La clave secreta del espacio (sk_…) o, para $account, la clave de cuenta (ak_…).
      * @param string         $server     La dirección de Seatsyoo, como https://tu-dominio-de-seatsyoo (sin /api/v1).
      * @param float          $timeout    Plazo de cada intento, en segundos: de la petición entera, con el cuerpo.
      * @param int            $maxRetries Reintentos como mucho en las peticiones que es seguro repetir (0 para ninguno).
@@ -72,6 +76,7 @@ class Client
         $this->charts = new Charts($this->http);
         $this->webhooks = new Webhooks($this->http);
         $this->workspace = new Workspace($this->http);
+        $this->account = new Account($this->http);
     }
 
     /**

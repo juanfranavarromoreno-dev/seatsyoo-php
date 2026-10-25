@@ -214,8 +214,12 @@ class Seasons extends ApiResource
      * Pone un estado en todos los eventos de la temporada, como Events::changeStatus(): también las marcas de los
      * estados propios con base free, que se leen evento a evento con Events::marks().
      *
+     * Con $expected y $channelKeys, como en Events::changeStatus(): en todos los eventos a la vez o en ninguno.
+     *
      * @param list<string|array{key: string, quantity?: int}> $objects
      * @param list<string>|null                               $events
+     * @param list<string>|null                               $expected
+     * @param list<string>|null                               $channelKeys
      *
      * @return array{objects: list<string>, seq: int, events: int}
      */
@@ -225,7 +229,9 @@ class Seasons extends ApiResource
         string $status,
         ?string $holdToken = null,
         ?string $orderId = null,
-        ?array $events = null
+        ?array $events = null,
+        ?array $expected = null,
+        ?array $channelKeys = null
     ): array {
         return $this->http->json('POST', $this->action($season, 'change-status'), self::fields([
             'objects' => self::objects($objects),
@@ -233,6 +239,25 @@ class Seasons extends ApiResource
             'holdToken' => $holdToken,
             'orderId' => self::orderId($orderId),
             'events' => $events,
+            'expected' => $expected,
+            'channelKeys' => $channelKeys,
+        ]));
+    }
+
+    /**
+     * Crea una temporada parcial (un abono de algunos de sus eventos) dentro de esta. No se reintenta: sin clave
+     * crearía dos.
+     *
+     * @param list<string> $events Las claves de sus eventos, todos de la temporada.
+     *
+     * @return array<string, mixed> La temporada parcial.
+     */
+    public function createPartial(string $season, array $events, ?string $key = null, ?string $name = null): array
+    {
+        return $this->http->json('POST', '/seasons/' . self::key($season) . '/partial-seasons', self::fields([
+            'key' => $key,
+            'name' => $name,
+            'events' => array_values($events),
         ]));
     }
 

@@ -202,17 +202,34 @@ class Events extends ApiResource
      * Al retener u ocupar no mira si el objeto está a la venta ni sus canales: es para tu taquilla, no para el
      * comprador.
      *
+     * Con $expected (los estados de los que se puede partir; "free" es sin estado), cada objeto cambia solo si tiene
+     * ahora uno de ellos, y todos a la vez o ninguno (409 objects-not-available con unexpected-status). Sirve para
+     * pasar una plaza vendida a otro estado sin liberarla antes (en el control de acceso, de "booked" a "sentado" y
+     * de vuelta): conserva su pedido y no se factura otra vez. Lo que ya tiene el estado pedido no cambia (un
+     * reintento). Con $channelKeys, lo de otros canales no cambia (not-in-channel).
+     *
      * @param list<string|array{key: string, quantity?: int}> $objects
+     * @param list<string>|null                               $expected
+     * @param list<string>|null                               $channelKeys
      *
      * @return array{objects: list<string>, seq: int}
      */
-    public function changeStatus(string $event, array $objects, string $status, ?string $holdToken = null, ?string $orderId = null): array
-    {
+    public function changeStatus(
+        string $event,
+        array $objects,
+        string $status,
+        ?string $holdToken = null,
+        ?string $orderId = null,
+        ?array $expected = null,
+        ?array $channelKeys = null
+    ): array {
         return $this->http->json('POST', $this->action($event, 'change-status'), self::fields([
             'objects' => self::objects($objects),
             'status' => $status,
             'holdToken' => $holdToken,
             'orderId' => self::orderId($orderId),
+            'expected' => $expected,
+            'channelKeys' => $channelKeys,
         ]));
     }
 
@@ -350,6 +367,101 @@ class Events extends ApiResource
             'keys' => $keys,
             'categories' => $categories,
         ]));
+    }
+
+    /**
+     * Sustituye todos los canales de venta del evento, con sus objetos. Una butaca solo puede estar en un canal.
+     *
+     * @param list<array{key: string, name: string, color: string, objects?: list<string>}> $channels
+     *
+     * @return array<string, mixed> El evento.
+     */
+    public function setChannels(string $event, array $channels): array
+    {
+        return $this->http->json('PUT', '/events/' . self::key($event) . '/channels', ['channels' => array_values($channels)]);
+    }
+
+    /**
+     * Crea un canal vacío (sin $channel, la clave sale del nombre). No se reintenta: sin clave crearía dos.
+     *
+     * @return array<string, mixed> El evento.
+     */
+    public function createChannel(string $event, string $name, string $color, ?string $channel = null): array
+    {
+        return $this->http->json('POST', '/events/' . self::key($event) . '/channels', self::fields([
+            'key' => $channel,
+            'name' => $name,
+            'color' => $color,
+        ]));
+    }
+
+    /**
+     * Cambia el nombre o el color de un canal (sus objetos no cambian).
+     *
+     * @param array{name?: string, color?: string} $changes
+     *
+     * @return array<string, mixed> El evento.
+     */
+    public function updateChannel(string $event, string $channel, array $changes): array
+    {
+        return $this->http->json('PATCH', '/events/' . self::key($event) . '/channels/' . self::key($channel, 'La clave del canal'), $changes);
+    }
+
+    /**
+     * Borra un canal: sus objetos vuelven a la venta general. No se reintenta (un reintento daría 404 aunque el
+     * primero lo hubiera borrado).
+     *
+     * @return array<string, mixed> El evento.
+     */
+    public function deleteChannel(string $event, string $channel): array
+    {
+        return $this->http->json('DELETE', '/events/' . self::key($event) . '/channels/' . self::key($channel, 'La clave del canal'), null, [], false);
+    }
+
+    /**
+     * Pasa objetos a un canal o, con $channel null, los saca del suyo (vuelven a la venta general). Repetirlo da lo
+     * mismo, así que se reintenta.
+     *
+     * @param list<string> $objects
+     *
+     * @return array<string, mixed> El evento.
+     */
+    public function assignChannel(string $event, ?string $channel, array $objects): array
+    {
+        return $this->http->json('POST', '/events/' . self::key($event) . '/channels/assign', [
+            'channel' => $channel,
+            'objects' => self::objects($objects),
+        ], [], true);
+    }
+
+    /**
+     * Resumen del evento: plazas por estado, por categoría (también las propias del evento) y por canal.
+     *
+     * @return array<string, mixed>
+     */
+    public function summary(string $event): array
+    {
+        return $this->http->json('GET', '/events/' . self::key($event) . '/report/summary');
+    }
+
+    /**
+     * Plazas por estado agrupadas por "section", "category" o "channel".
+     *
+     * @return array{by: string, groups: list<array<string, mixed>>}
+     */
+    public function reportBy(string $event, string $by): array
+    {
+        return $this->http->json('GET', '/events/' . self::key($event) . '/report/by', null, ['by' => $by]);
+    }
+
+    /**
+     * Lo vendido de cada pedido del evento.
+     *
+     * @return array<string, mixed>
+     */
+    public function reportOrders(string $event): array
+    {
+        return $this->http->json('GET', '/events/' . self::key($event) . '/report/orders');
     }
 
     private function action(string $event, string $action): string

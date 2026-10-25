@@ -5,11 +5,48 @@ declare(strict_types=1);
 namespace Seatsyoo\Resources;
 
 /**
- * Planos (se dibujan en el diseñador del panel o en el diseñador incrustado en tu web; por la API se consultan, se
- * copian al entorno de pruebas y se abren sesiones de ese diseñador).
+ * Planos (se dibujan en el diseñador del panel o en el diseñador incrustado en tu web; por la API se crean, se
+ * consultan, se publican, se duplican, se copian al entorno de pruebas y se abren sesiones de ese diseñador).
  */
 class Charts extends ApiResource
 {
+    /**
+     * Crea un plano, vacío (para dibujarlo en el diseñador) o con un documento. Sin $key, un UUID. No se reintenta.
+     *
+     * @param array<string, mixed>|null $document
+     *
+     * @return array<string, mixed> El plano.
+     */
+    public function create(string $name, ?string $key = null, ?array $document = null): array
+    {
+        return $this->http->json('POST', '/charts', self::fields([
+            'name' => $name,
+            'key' => $key,
+            'document' => $document,
+        ]));
+    }
+
+    /**
+     * Publica el borrador como una versión nueva; sus eventos pasan a ella. 409 objects-in-use si quita o renombra
+     * objetos con ventas o retenciones.
+     *
+     * @return array<string, mixed> El plano, con "version".
+     */
+    public function publish(string $chart): array
+    {
+        return $this->http->json('POST', '/charts/' . self::key($chart) . '/publish');
+    }
+
+    /**
+     * Copia un plano en el mismo espacio, con otra clave (como borrador). No se reintenta: crearía dos copias.
+     *
+     * @return array<string, mixed> La copia.
+     */
+    public function duplicate(string $chart): array
+    {
+        return $this->http->json('POST', '/charts/' . self::key($chart) . '/duplicate');
+    }
+
     /**
      * Los planos del espacio, los cambiados más recientemente primero.
      *

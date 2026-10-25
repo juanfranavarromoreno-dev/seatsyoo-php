@@ -88,6 +88,9 @@ const { buildApp } = await importar("apps/server/src/app.ts");
 const { createUser } = await importar("apps/server/src/users.ts");
 const { addSecretKey, createWorkspace, testEnvironmentOf } = await importar("apps/server/src/workspaces.ts");
 const { sampleTheatre } = await importar("packages/core/src/index.ts");
+// Las claves de cuenta (integración con Tikyoo) solo están en los servidores que ya las tienen: sin ellas, sus pruebas
+// se saltan.
+const cuentas = existsSync(join(servidor, "src", "accountKeys.ts")) ? await importar("apps/server/src/accountKeys.ts") : null;
 
 // El repartidor de webhooks en marcha (cada segundo) y con permiso para enviar a 127.0.0.1, donde escucha el
 // receptor de las pruebas.
@@ -111,6 +114,8 @@ try {
   await api("POST", "/charts/teatro/publish");
   await api("POST", "/events", { chartKey: "teatro", key: "hamlet", name: "Hamlet", date: "2026-11-20T20:30:00+01:00" });
 
+  const claveDeCuenta = cuentas ? cuentas.createAccountKey(ctx, workspace.public_key, "php@pruebas.test") : "";
+
   console.log(`Servidor de Seatsyoo de pruebas en http://127.0.0.1:${port} (base en memoria, de ${raiz})`);
   codigo = await ejecutarPhp(carpetas, {
     SEATSYOO_TEST_SERVER: `http://127.0.0.1:${port}`,
@@ -119,6 +124,7 @@ try {
     SEATSYOO_TEST_TEST_SECRET_KEY: claveDePruebas,
     SEATSYOO_TEST_TEST_PUBLIC_KEY: pruebas.public_key,
     SEATSYOO_TEST_EVENT: "hamlet",
+    SEATSYOO_TEST_ACCOUNT_KEY: claveDeCuenta,
   });
 } finally {
   await app.close();

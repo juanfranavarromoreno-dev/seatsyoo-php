@@ -334,13 +334,13 @@ dos veces: guarda los `id` que ya has procesado. Para probar tu receptor sin esp
 $seatsyoo->events->list(chart: null)
 $seatsyoo->events->create(['chartKey' => …, 'key' => …, 'name' => …, 'date' => …])
 $seatsyoo->events->retrieve($evento)
-$seatsyoo->events->update($evento, ['name' => …, 'date' => null, 'categoryOverridesChanges' => […]])
+$seatsyoo->events->update($evento, ['name' => …, 'date' => null, 'categories' => […], 'categoryOverridesChanges' => […]])
 $seatsyoo->events->delete($evento, force: false)
 $seatsyoo->events->hold($evento, $objetos, holdToken: …, channelKeys: null, ignoreChannels: null)
 $seatsyoo->events->book($evento, $objetos, holdToken: null, orderId: null, channelKeys: null, ignoreChannels: null)
 $seatsyoo->events->release($evento, $objetos, holdToken: null)
 $seatsyoo->events->refund($evento, $orderId, objects: null)
-$seatsyoo->events->changeStatus($evento, $objetos, $estado, holdToken: null, orderId: null)
+$seatsyoo->events->changeStatus($evento, $objetos, $estado, holdToken: null, orderId: null, expected: null, channelKeys: null)
 $seatsyoo->events->bestAvailable($evento, $numero, categories: null, accessible: null, allowSplit: null, holdToken: null, orderId: null, channelKeys: null)
 $seatsyoo->events->statuses($evento, holdToken: null)
 $seatsyoo->events->retrieveObject($evento, $objeto)
@@ -349,6 +349,9 @@ $seatsyoo->events->statusChanges($evento, limit: null, before: null, object: nul
 $seatsyoo->events->marks($evento)
 $seatsyoo->events->markNotForSale($evento, keys: null, categories: null)
 $seatsyoo->events->markForSale($evento, keys: null, categories: null)
+$seatsyoo->events->setChannels($evento, $canales) · createChannel($evento, $nombre, $color, channel: null)
+$seatsyoo->events->updateChannel($evento, $canal, […]) · deleteChannel($evento, $canal) · assignChannel($evento, $canal|null, $objetos)
+$seatsyoo->events->summary($evento) · reportBy($evento, 'section'|'category'|'channel') · reportOrders($evento)
 
 $seatsyoo->holdTokens->create()
 $seatsyoo->holdTokens->retrieve($token)
@@ -358,8 +361,10 @@ $seatsyoo->seasons->list(chart: null) · create([…]) · retrieve($temporada) �
 $seatsyoo->seasons->addEvents($temporada, eventKeys: null, events: null) · removeEvent($temporada, $evento)
 $seatsyoo->seasons->statuses($temporada, holdToken: null, events: null)
 $seatsyoo->seasons->hold / book / release / refund / changeStatus / bestAvailable   // como en events, con events: [...] para un abono parcial
+$seatsyoo->seasons->createPartial($temporada, $eventos, key: null, name: null)
 
 $seatsyoo->charts->list(archived: false, q: null) · retrieve($plano) · copyToTest($plano)
+$seatsyoo->charts->create($nombre, key: null, document: null) · publish($plano) · duplicate($plano)
 $seatsyoo->charts->designerSession($plano, publish: null, expiresIn: null)   // diseñador incrustado
 
 $seatsyoo->webhooks->list() · create(['url' => …, 'types' => […]]) · update($webhook, […]) · delete($webhook)
@@ -368,12 +373,29 @@ $seatsyoo->webhooks->test($webhook) · deliveries($webhook, limit: null) · retr
 $seatsyoo->workspace->retrieve() · update(['maxHoldPerToken' => …, 'holdPeriodSeconds' => …, 'allowedOrigins' => […]])
 $seatsyoo->workspace->createTestEnvironment() · reset()
 
+// Con una clave de cuenta (ak_…): los espacios de tus clientes. Tú eres el cliente de Seatsyoo (tus datos fiscales).
+$cuenta->account->createWorkspace($nombre)   // con secretKey y testSecretKey, que solo vienen ahora
+$cuenta->account->workspaces() · renameWorkspace($clavePublica, $nombre) · usage(month: null)
+
 \Seatsyoo\Webhook::verify($cuerpo, $firma, $secreto, tolerance: 300)
 \Seatsyoo\Webhook::signatureHeader($cuerpo, $secreto, timestamp: null)
 ```
 
 Las claves que van en la ruta (evento, objeto, pedido…) se codifican para URL solas: `'Palco 1'` va como
 `Palco%201`.
+
+## Pasar una plaza de un estado a otro
+
+Con `expected`, `changeStatus()` cambia el estado solo de lo que está en uno de esos estados, todo o nada, sin liberar
+la plaza entre medias (409 `objects-not-available` con `unexpected-status` si alguno no cuadra). Por ejemplo, en el
+control de acceso:
+
+```php
+$seatsyoo->events->changeStatus('hamlet-2026-11-20', ['Platea-C-1'], 'sentado', expected: ['booked']);
+$seatsyoo->events->changeStatus('hamlet-2026-11-20', ['Platea-C-1'], 'booked', expected: ['sentado']);   // y de vuelta
+```
+
+La plaza conserva su pedido y no se factura otra vez.
 
 ## Otras rutas
 
