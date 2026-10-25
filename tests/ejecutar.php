@@ -1,13 +1,14 @@
 <?php
 
 /**
- * Ejecuta las pruebas del SDK.
+ * Ejecuta las pruebas del SDK. Solo necesita PHP.
  *
  *     php tests/ejecutar.php               # unitarias y, si hay servidor de pruebas, de integración
- *     php tests/ejecutar.php unitarias     # solo unitarias
+ *     php tests/ejecutar.php unitarias     # solo unitarias (lo mismo que «composer test»)
  *
  * Las de integración necesitan un servidor de Seatsyoo de pruebas (SEATSYOO_TEST_SERVER y compañía): las
- * prepara tests/ejecutar.mjs (pnpm test), que levanta uno en memoria.
+ * prepara tests/ejecutar.mjs, que levanta uno en memoria con el servidor de la copia a la que apunte BUTACAS_DIR
+ * (BUTACAS_DIR=/ruta/al/servidor node tests/ejecutar.mjs). Sin él, se saltan con un aviso.
  */
 
 declare(strict_types=1);
@@ -41,7 +42,8 @@ if ($carpetas === []) {
 echo 'PHP ' . PHP_VERSION . (extension_loaded('curl') ? ' con curl' : ' sin curl') . "\n";
 foreach ($carpetas as $carpeta) {
     if ($carpeta === 'integracion' && getenv('SEATSYOO_TEST_SERVER') === false) {
-        echo "Sin servidor de pruebas (SEATSYOO_TEST_SERVER): se saltan las de integración. Lánzalas con «pnpm test».\n";
+        echo "Sin servidor de pruebas (SEATSYOO_TEST_SERVER): se saltan las de integración. Para lanzarlas:\n"
+            . "  BUTACAS_DIR=/ruta/a/la/copia/del/servidor node tests/ejecutar.mjs (mira «Pruebas» en el README).\n";
         continue;
     }
     $archivos = glob(__DIR__ . '/' . basename($carpeta) . '/*.php') ?: [];
