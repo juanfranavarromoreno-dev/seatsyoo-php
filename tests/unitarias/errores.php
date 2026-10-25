@@ -68,6 +68,42 @@ prueba('un 200 que no es JSON válido: invalid-response', function (): void {
     contiene('dirección del servidor', $error->getMessage());
 });
 
+// Revisión de los SDK (25 oct 2026): el catch de «Vender» del README daba por «un 4xx, no se ha vendido nada» todo lo
+// que no era 0 ni un 5xx, también un 2xx con invalid-response (la reserva pudo hacerse y perderse el cuerpo) o un 3xx,
+// y llevaba a devolver el cobro de lo que quizá se vendió.
+prueba('el catch de «Vender» del README: solo un 4xx no ha vendido nada; sin respuesta, un 2xx, un 3xx o un 5xx, no se sabe', function (): void {
+    // fragmentoDelReadme() está en precios.php. La condición del if que lleva a «no se sabe si se vendió».
+    $fragmento = fragmentoDelReadme('Vender');
+    $aviso = strpos($fragmento, 'no se sabe si se vendió');
+    cierto($aviso !== false, 'el catch dice cuándo no se sabe si se vendió');
+    $inicio = strrpos(substr($fragmento, 0, (int) $aviso), 'if (');
+    cierto($inicio !== false && preg_match('/\Gif \((.+)\) \{\n/', $fragmento, $si, 0, (int) $inicio) === 1, 'un if antes del aviso');
+    contiene('// Un 4xx (entre 400 y 499): esta reserva no ha vendido nada', $fragmento);
+    // Los errores de verdad que lanza book(), sin reintentos; true si el README dice que no se sabe si se vendió.
+    $casos = [
+        'un 200 que no es JSON' => [new Response(200, ['Content-Type' => 'text/html'], '<!doctype html>'), true],
+        'un 200 cortado' => [new Response(200, ['Content-Type' => 'application/json'], '{"objects":["Platea-'), true],
+        'una redirección' => [new Response(302, ['Location' => 'https://otro.example/'], ''), true],
+        'un 502 de un proxy' => [new Response(502, ['Content-Type' => 'text/html'], '<html>Bad gateway</html>'), true],
+        'un 503 de la API' => [errorApi(503, 'unavailable'), true],
+        'sin respuesta' => [agotado(), true],
+        '409 objects-not-available' => [errorApi(409, 'objects-not-available'), false],
+        '400 hold-token-expired' => [errorApi(400, 'hold-token-expired'), false],
+        '403 production-locked' => [errorApi(403, 'production-locked'), false],
+        '404 de un evento que ya no existe' => [errorApi(404, 'not-found'), false],
+    ];
+    foreach ($casos as $que => [$respuesta, $noSeSabe]) {
+        $entorno = new Entorno([$respuesta], 0);
+        $e = lanza(SeatsyooException::class, fn () => $entorno->events->book('hamlet', [['key' => 'Platea-C-1', 'quantity' => 1]], holdToken: 'hold_1', orderId: 'pedido-2001'));
+        igual($noSeSabe, eval("return {$si[1]};"), $que);
+    }
+    // Y el resumen en inglés dice lo mismo.
+    $readme = (string) file_get_contents(__DIR__ . '/../../README.md');
+    $resumen = (string) preg_replace('/\s+/', ' ', substr($readme, (int) strpos($readme, "\n## English summary\n")));
+    contiene("a 2xx with `invalid-response`, a 3xx with `http-error`), you can't tell whether it sold", $resumen);
+    contiene('Any other 4xx (`getStatus()` from 400 to 499) sold nothing either', $resumen);
+});
+
 prueba('las rutas que no son JSON (CSV) devuelven el texto con request()', function (): void {
     $e = new Entorno([new Response(200, ['Content-Type' => 'text/csv; charset=utf-8'], "\u{FEFF}pedido,fecha\r\npedido-1,2026-10-16\r\n")]);
     $csv = $e->http->request('GET', '/events/hamlet/report/orders.csv');

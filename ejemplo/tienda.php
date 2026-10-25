@@ -82,20 +82,21 @@ final class Tienda
      * sigue vendido, pero si después devolviste una parte, volvería a vender lo devuelto (si sigue libre y el token
      * vive), así que la tienda no la repite.
      *
-     * Si falla, el pago ya está cobrado y esta reserva no ha vendido nada, porque es todo o nada:
+     * Si falla, el pago ya está cobrado. Según getStatus() y getErrorCode():
      *
      * - 409 objects-not-available (getDetails() dice qué plaza y por qué: held, booked…), 400 hold-token-expired o
-     *   400 invalid-hold-token: repetirla no lo arregla. Antes de darlo por perdido mira el pedido en Seatsyoo
-     *   (retrieveOrder()): si ya tiene plazas, se vendió en un intento anterior cuya respuesta no llegó (y después
-     *   cambió, con una devolución, por ejemplo); queda reservado con lo que diga el pedido, y cuadra() dirá si es lo
-     *   cobrado. Si no tiene nada, el pedido queda «por devolver» (en guardado()) y se relanza el error: devuelve el
-     *   cobro con tu pasarela, o ofrece al comprador otras plazas en un pedido nuevo, y no emitas entradas. Un pedido
-     *   por devolver no se vuelve a reservar: si las plazas quedaran libres después, un aviso repetido de la pasarela
-     *   las vendería con el cobro ya devuelto.
-     * - Sin respuesta tras los reintentos del SDK (getStatus() 0: network-error, timeout) o un 5xx: no se sabe si se
-     *   vendió. Repítelo más tarde con el mismo pedido, que no vende dos veces.
-     * - Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): no se ha vendido nada, y repetirlo no lo
-     *   arregla mientras no cambie la causa. Revísalo, o devuelve el cobro.
+     *   400 invalid-hold-token: esta reserva no ha vendido nada, porque es todo o nada, y repetirla no lo arregla.
+     *   Antes de darlo por perdido mira el pedido en Seatsyoo (retrieveOrder()): si ya tiene plazas, se vendió en un
+     *   intento anterior cuya respuesta no llegó (y después cambió, con una devolución, por ejemplo); queda reservado
+     *   con lo que diga el pedido, y cuadra() dirá si es lo cobrado. Si no tiene nada, el pedido queda «por devolver»
+     *   (en guardado()) y se relanza el error: devuelve el cobro con tu pasarela, o ofrece al comprador otras plazas
+     *   en un pedido nuevo, y no emitas entradas. Un pedido por devolver no se vuelve a reservar: si las plazas
+     *   quedaran libres después, un aviso repetido de la pasarela las vendería con el cobro ya devuelto.
+     * - Sin respuesta tras los reintentos del SDK (getStatus() 0: network-error, timeout), un 5xx o una respuesta que
+     *   no se entiende (un 2xx con invalid-response, un 3xx con http-error): no se sabe si se vendió. Repítelo más
+     *   tarde con el mismo pedido, que no vende dos veces.
+     * - Otro 4xx (getStatus() entre 400 y 499: el evento ya no existe, la clave de producción bloqueada…): no se ha
+     *   vendido nada, y repetirlo no lo arregla mientras no cambie la causa. Revísalo, o devuelve el cobro.
      *
      * Para que el token no caduque mientras se cobra, amplíalo en la caja (holdTokens->extend(), como compra.php).
      *

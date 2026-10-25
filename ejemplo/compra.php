@@ -71,9 +71,10 @@ try {
     $reserva = $tienda->alConfirmarElPago($pedido);
 } catch (SeatsyooException $e) {
     if (!isset($tienda->guardado($pedido)['porDevolver'])) {
-        // Sin respuesta (getStatus() 0) o un 5xx: no se sabe si se vendió; repítelo más tarde con el mismo pedido.
-        // Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): no se ha vendido nada; revísalo, o
-        // devuelve el cobro.
+        // Sin respuesta (getStatus() 0), un 5xx o una respuesta que no se entiende (un 2xx con invalid-response, un
+        // 3xx con http-error): no se sabe si se vendió; repítelo más tarde con el mismo pedido.
+        // Otro 4xx (getStatus() entre 400 y 499: el evento ya no existe, la clave de producción bloqueada…): no se ha
+        // vendido nada; revísalo, o devuelve el cobro.
         throw $e;
     }
     // Cobrado y sin vender nada (todo o nada): devuelve el cobro con tu pasarela y no emitas entradas.

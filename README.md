@@ -75,10 +75,12 @@ $seatsyoo->holdTokens->extend($holdToken, seconds: 600);
 try {
     $seatsyoo->events->book($evento, $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
 } catch (SeatsyooException $e) {
-    if ($e->getStatus() === 0 || $e->getStatus() >= 500) {
-        throw $e;   // Sin respuesta o un 5xx: no se sabe si se vendió; repítelo con el mismo pedido, que no vende dos veces.
+    if ($e->getStatus() < 400 || $e->getStatus() >= 500) {
+        // Sin respuesta (0), un 5xx o una respuesta que no se entiende (un 2xx con invalid-response, un 3xx con
+        // http-error): no se sabe si se vendió. Repítelo con el mismo pedido, que no vende dos veces.
+        throw $e;
     }
-    // Un 4xx: esta reserva no ha vendido nada (es todo o nada).
+    // Un 4xx (entre 400 y 499): esta reserva no ha vendido nada (es todo o nada).
     if (!in_array($e->getErrorCode(), ['objects-not-available', 'hold-token-expired', 'invalid-hold-token'], true)) {
         throw $e;   // Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): revísalo, o devuelve el cobro.
     }
@@ -197,7 +199,7 @@ Todo lo que falla en una petición lanza `Seatsyoo\SeatsyooException`:
 | Método | Qué da |
 | --- | --- |
 | `getStatus()` | El código HTTP; 0 si no hubo respuesta. |
-| `getErrorCode()` | El código del error, estable: `objects-not-available`, `not-found`, `hold-token-expired`, `pricing-not-supported`…; sin respuesta, `network-error` o `timeout`. |
+| `getErrorCode()` | El código del error, estable: `objects-not-available`, `not-found`, `hold-token-expired`, `pricing-not-supported`…; sin respuesta, `network-error` o `timeout`; sin el error de la API (un proxy, una redirección), `http-error`; si una respuesta buena (2xx) no es JSON, `invalid-response`, con ese código. |
 | `getMessage()` | Una explicación para personas, en español. Puede cambiar: no la compares. |
 | `getDetails()` | Los detalles, si los hay: en `objects-not-available`, `[['key' => …, 'reason' => …]]`. |
 
@@ -426,10 +428,11 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   book exactly the stored list with your `orderId`. Never book the list the browser sends. If booking fails after
   payment (`409 objects-not-available`, `400 hold-token-expired` or `400 invalid-hold-token`), nothing was sold
   (actions are all or nothing): if `retrieveOrder()` shows nothing sold by an earlier attempt, refund the payment (or
-  offer other seats in a new order) and never book that order again. With no response (`getStatus()` 0) or a 5xx,
-  you can't tell whether it sold: repeat it with the same `orderId`, which never sells twice. Any other 4xx sold
-  nothing either: check it, or refund. Once booked, don't book the order again: after a partial refund, a repeat
-  sells the refunded places again (if still free and the token is alive). See `ejemplo/tienda.php`.
+  offer other seats in a new order) and never book that order again. With no response (`getStatus()` 0), a 5xx or
+  a response that can't be read (a 2xx with `invalid-response`, a 3xx with `http-error`), you can't tell whether it
+  sold: repeat it with the same `orderId`, which never sells twice. Any other 4xx (`getStatus()` from 400 to 499)
+  sold nothing either: check it, or refund. Once booked, don't book the order again: after a partial refund, a
+  repeat sells the refunded places again (if still free and the token is alive). See `ejemplo/tienda.php`.
 - The viewer's caps apply to the public API only, never to the secret key: `409 hold-limit` (per token and event,
   `maxHoldPerToken`, 10 by default; read it with `workspace->retrieve()` and change it with `workspace->update()`),
   `409 hold-limit-ip` (per IP and event: 10 % of capacity, up to 200, never below `maxHoldPerToken`) and
@@ -449,7 +452,9 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   `charts->copyToTest($chart)` and `workspace->reset()` (test keys only; `409 not-test-environment` with a
   production key).
 - Errors throw `Seatsyoo\SeatsyooException` with `getStatus()` (0 when there was no response),
-  `getErrorCode()` (stable API code, or `network-error` / `timeout`) and `getDetails()`.
+  `getErrorCode()` (stable API code, or `network-error` / `timeout`; `http-error` without the API's error body, such
+  as a proxy or a redirect; `invalid-response` when a successful response (2xx) is not JSON, with that status) and
+  `getDetails()`.
 - Retries (network errors, timeouts, 429 honouring `Retry-After` up to 60 s, 502/503/504, exponential backoff
   with jitter) only for requests that are safe to repeat: GET/PUT/DELETE, booking with an `orderId` and
   refunding a whole order. When `book()`, `refund()` or `delete()` had to be repeated, the result carries
