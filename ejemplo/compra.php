@@ -71,7 +71,10 @@ try {
     $reserva = $tienda->alConfirmarElPago($pedido);
 } catch (SeatsyooException $e) {
     if (!isset($tienda->guardado($pedido)['porDevolver'])) {
-        throw $e;   // Sin respuesta o un 5xx: no se sabe si se vendió; repítelo más tarde con el mismo pedido.
+        // Sin respuesta (getStatus() 0) o un 5xx: no se sabe si se vendió; repítelo más tarde con el mismo pedido.
+        // Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): no se ha vendido nada; revísalo, o
+        // devuelve el cobro.
+        throw $e;
     }
     // Cobrado y sin vender nada (todo o nada): devuelve el cobro con tu pasarela y no emitas entradas.
     echo "No se ha podido reservar el pedido $pedido ({$e->getErrorCode()}): devuelve el cobro.\n";

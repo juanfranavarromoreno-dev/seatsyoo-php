@@ -288,7 +288,8 @@ class Events extends ApiResource
      *
      * La marca sigue aunque la plaza se retenga, se venda o se devuelva, así que también trae plazas vendidas. Solo
      * la quita changeStatus(…, "free") sin token, que además libera la plaza del todo (lo retenido y lo vendido);
-     * otro estado con base free la sustituye, y borrar el estado del catálogo quita las suyas.
+     * otro estado con base free la sustituye. Borrar del catálogo un estado que tienen plazas da 409 status-in-use,
+     * salvo con force=1 (Client::request('DELETE', '/statuses/…', query: ['force' => '1'])), que quita sus marcas.
      *
      * Para un visor en modo «manager» (tu taquilla o tu panel, que pinta cada plaza por su estado), "marks" es su
      * opción marks; el nombre, el color y el icono de cada estado van en su opción statusStyles, sacados del

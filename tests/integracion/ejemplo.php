@@ -117,12 +117,19 @@ prueba('ejemplo/tienda.php: reserva lo guardado en la caja, no lo que el token r
     igual(['s' => 'held', 'mine' => true], $estados['Platea-D-3']);
     igual(2, $estados['Pista']['mq']);
 
-    // Repetir la confirmación (un aviso de la pasarela que llega dos veces) no vende otra vez.
-    igual(['objects' => [], 'seq' => 0], $tienda->alConfirmarElPago('pedido-tienda'));
+    // Repetir la confirmación (un aviso de la pasarela que llega dos veces) no vuelve a reservar: lo de la primera vez.
+    igual($reserva, $tienda->alConfirmarElPago('pedido-tienda'));
     igual(true, $tienda->cuadra('pedido-tienda'));
     // Si algo cambia en el pedido, no cuadra.
     $seatsyoo->events->refund('ejemplo-tienda', 'pedido-tienda', ['Platea-D-2']);
     igual(false, $tienda->cuadra('pedido-tienda'));
+    // Regresión: un aviso repetido después de la devolución volvía a llamar a book(), que con el token aún vivo
+    // vendía otra vez la plaza devuelta. Ahora devuelve lo guardado y la plaza sigue libre.
+    igual($reserva, $tienda->alConfirmarElPago('pedido-tienda'));
+    cierto(!isset($seatsyoo->events->statuses('ejemplo-tienda')['objects']['Platea-D-2']), 'Platea-D-2 sigue libre');
+    igual(false, $tienda->cuadra('pedido-tienda'));
+    // Un pedido reservado no vuelve a la caja, aunque el token aún retenga plazas.
+    lanza(\RuntimeException::class, fn () => $tienda->alPasarPorCaja('pedido-tienda', 'ejemplo-tienda', $token));
 
     // Sin nada retenido, la caja no cobra.
     $vacio = $seatsyoo->holdTokens->create()['token'];
@@ -161,6 +168,37 @@ prueba('ejemplo/tienda.php: si otro se lleva una plaza entre la caja y el pago, 
     lanza(\RuntimeException::class, fn () => $tienda->alConfirmarElPago('pedido-perdido'));
     igual([], $seatsyoo->events->retrieveOrder('ejemplo-perdida', 'pedido-perdido')['objects']);
     cierto(!isset($seatsyoo->events->statuses('ejemplo-perdida')['objects']['Platea-E-2']), 'Platea-E-2 sigue libre');
+});
+
+prueba('ejemplo/tienda.php: si se perdió la respuesta de la reserva y el pedido cambió después, no queda por devolver', function (): void {
+    require_once __DIR__ . '/../../ejemplo/tienda.php';
+    $clave = (string) getenv('SEATSYOO_TEST_SECRET_KEY');
+    $servidor = (string) getenv('SEATSYOO_TEST_SERVER');
+    $seatsyoo = new Client(secretKey: $clave, server: $servidor);
+    $seatsyoo->events->create(['chartKey' => 'teatro', 'key' => 'ejemplo-cortada', 'name' => 'Respuesta perdida']);
+    // La tienda, sin reintentos y con la respuesta de su primera reserva perdida: se vende, pero no lo sabe.
+    $perdedor = new TransporteQuePierde(array_values(transportes())[0](), 'POST');
+    $tienda = new \Tienda(new Client(secretKey: $clave, server: $servidor, maxRetries: 0, transport: $perdedor), ['preferente' => 45, 'platea' => 30]);
+    $token = $seatsyoo->holdTokens->create()['token'];
+    $seatsyoo->events->hold('ejemplo-cortada', ['Platea-E-5', 'Platea-E-6'], holdToken: $token);
+    $tienda->alPasarPorCaja('pedido-cortado', 'ejemplo-cortada', $token);
+    $error = lanza(SeatsyooException::class, fn () => $tienda->alConfirmarElPago('pedido-cortado'));
+    igual([0, 'timeout'], [$error->getStatus(), $error->getErrorCode()]);
+    igual('POST 200', end($perdedor->respuestas), 'la reserva llegó y se hizo');
+    cierto(!isset($tienda->guardado('pedido-cortado')['porDevolver']), 'sin respuesta no queda por devolver');
+
+    // Después se devuelve Platea-E-6 y la retiene otro comprador.
+    $seatsyoo->events->refund('ejemplo-cortada', 'pedido-cortado', ['Platea-E-6']);
+    $seatsyoo->events->hold('ejemplo-cortada', ['Platea-E-6'], holdToken: $seatsyoo->holdTokens->create()['token']);
+    // El aviso repetido da 409 objects-not-available, pero el pedido ya tiene Platea-E-5 vendida: no se devuelve el
+    // cobro, queda reservado con lo que dice el pedido, y cuadra() avisa de que no es lo cobrado.
+    igual(['objects' => ['Platea-E-5'], 'seq' => 0, 'retried' => true], $tienda->alConfirmarElPago('pedido-cortado'));
+    cierto(!isset($tienda->guardado('pedido-cortado')['porDevolver']), 'no queda por devolver');
+    igual(false, $tienda->cuadra('pedido-cortado'));
+    igual(['booked', 'held'], [
+        $seatsyoo->events->retrieveObject('ejemplo-cortada', 'Platea-E-5')['status'],
+        $seatsyoo->events->retrieveObject('ejemplo-cortada', 'Platea-E-6')['status'],
+    ]);
 });
 
 prueba('ejemplo/tienda.php: el importe cuenta las plazas de una mesa entera, un palco y una zona de pie', function (): void {

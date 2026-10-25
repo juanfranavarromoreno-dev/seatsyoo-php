@@ -70,16 +70,23 @@ $seatsyoo->holdTokens->extend($holdToken, seconds: 600);
 
 // … cobra …
 
-// 2. Con el pago confirmado: la lista guardada, tal cual.
+// 2. Con el pago confirmado: la lista guardada, tal cual. Apunta en el pedido que ya está reservado: si el aviso del
+//    pago llega otra vez, no vuelvas a reservar.
 try {
     $seatsyoo->events->book($evento, $objetos, holdToken: $holdToken, orderId: 'pedido-2001');
 } catch (SeatsyooException $e) {
-    if (!in_array($e->getErrorCode(), ['objects-not-available', 'hold-token-expired', 'invalid-hold-token'], true)) {
+    if ($e->getStatus() === 0 || $e->getStatus() >= 500) {
         throw $e;   // Sin respuesta o un 5xx: no se sabe si se vendió; repítelo con el mismo pedido, que no vende dos veces.
     }
-    // Cobrado y sin vender nada (la reserva es todo o nada): devuelve el cobro, u ofrece otras plazas en un pedido
-    // nuevo, y no emitas entradas ni vuelvas a reservar este pedido. En objects-not-available, getDetails() dice qué
-    // plazas y por qué: [['key' => 'Platea-C-2', 'reason' => 'held']] (held, booked, not-for-sale…).
+    // Un 4xx: esta reserva no ha vendido nada (es todo o nada).
+    if (!in_array($e->getErrorCode(), ['objects-not-available', 'hold-token-expired', 'invalid-hold-token'], true)) {
+        throw $e;   // Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): revísalo, o devuelve el cobro.
+    }
+    // Repetirla no lo arregla. Mira antes retrieveOrder(): si trae plazas, las vendió un intento anterior cuya
+    // respuesta no llegó, y no hay que devolver el cobro sino revisarlo. Si no trae nada, está cobrado y sin vender:
+    // devuelve el cobro, u ofrece otras plazas en un pedido nuevo, y no emitas entradas ni vuelvas a reservar este
+    // pedido. En objects-not-available, getDetails() dice qué plazas y por qué:
+    // [['key' => 'Platea-C-2', 'reason' => 'held']] (held, booked, not-for-sale…).
 }
 
 // Lo vendido con ese pedido: clave, plazas y estado de cada objeto. Compáralo con lo que cobraste.
@@ -97,11 +104,13 @@ el pago, reservarías más de lo cobrado (lo que retenga de más caduca solo). P
 cantidad: en una zona de pie, reservar sin cantidad reserva lo que el token tenga allí en ese momento. La caja
 entera, con el importe, la comprobación de que lo vendido es lo cobrado y qué hacer si la reserva falla con el pago
 ya cobrado (el pedido queda por devolver y no se reserva otra vez), está en [`ejemplo/tienda.php`](ejemplo/tienda.php).
+Allí, un pedido ya reservado tampoco se reserva otra vez: un aviso del pago repetido recibe lo que respondió la reserva.
 
 Las acciones son todo o nada: si un objeto no se puede, no se toca ninguno. Con `orderId`, repetir la
-reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias. El número de
-pedido lo pone tu tienda, nunca el comprador, y no puede ser `''` (lanza `InvalidArgumentException`): para
-«sin pedido», `null`.
+reserva no vende otra vez (responde `"objects": []`), aunque el token haya caducado entre medias, mientras el pedido
+siga como lo dejó la reserva: si después devolviste una parte, repetirla vuelve a vender lo devuelto (si sigue libre y
+el token vive). El número de pedido lo pone tu tienda, nunca el comprador, y no puede ser `''` (lanza
+`InvalidArgumentException`): para «sin pedido», `null`.
 
 Las mejores butacas libres juntas, retenidas con un token o reservadas directamente (de 1 a 100):
 
@@ -169,8 +178,10 @@ $seatsyoo->events->marks($evento);   // ['marks' => ['Platea-G-3' => 'visibilida
 
 La marca sigue aunque la plaza se retenga, se venda o se devuelva, así que `marks()` también trae plazas
 vendidas. Solo la quita `changeStatus($evento, $objetos, 'free')` sin token, que además libera la plaza del todo
-(lo retenido y lo vendido, como `release()` sin token); otro estado con base `free` la sustituye, y borrar el estado
-del catálogo quita las suyas.
+(lo retenido y lo vendido, como `release()` sin token), y otro estado con base `free` la sustituye. Borrar del
+catálogo un estado que tienen plazas (marcas incluidas) da `409 status-in-use`, salvo con `force=1`
+(`request('DELETE', '/statuses/visibilidad-reducida', query: ['force' => '1'])`): entonces se quitan sus marcas, y
+las plazas que tenía ocupadas o bloqueadas se quedan con su clave, que pasa a contar como ocupada.
 
 Esto es lo que alimenta un visor en modo «manager» (tu taquilla o tu panel, que pinta cada plaza por su estado):
 `events->marks($evento)['marks']` va a su opción `marks`, y el catálogo
@@ -414,9 +425,11 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   `mine` entries, always with a quantity: `mq` or 1), charge for that list and store it with the order; once paid,
   book exactly the stored list with your `orderId`. Never book the list the browser sends. If booking fails after
   payment (`409 objects-not-available`, `400 hold-token-expired` or `400 invalid-hold-token`), nothing was sold
-  (actions are all or nothing): refund the payment (or offer other seats in a new order) and never book that order
-  again. With no response or a 5xx, repeat it with the same `orderId`, which never sells twice. See
-  `ejemplo/tienda.php`.
+  (actions are all or nothing): if `retrieveOrder()` shows nothing sold by an earlier attempt, refund the payment (or
+  offer other seats in a new order) and never book that order again. With no response (`getStatus()` 0) or a 5xx,
+  you can't tell whether it sold: repeat it with the same `orderId`, which never sells twice. Any other 4xx sold
+  nothing either: check it, or refund. Once booked, don't book the order again: after a partial refund, a repeat
+  sells the refunded places again (if still free and the token is alive). See `ejemplo/tienda.php`.
 - The viewer's caps apply to the public API only, never to the secret key: `409 hold-limit` (per token and event,
   `maxHoldPerToken`, 10 by default; read it with `workspace->retrieve()` and change it with `workspace->update()`),
   `409 hold-limit-ip` (per IP and event: 10 % of capacity, up to 200, never below `maxHoldPerToken`) and
@@ -428,7 +441,8 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   a booking, `blocked` blocks it, and `free` marks it while it stays on sale. `events->marks($event)` reads the marks;
   a mark survives holding, booking and refunding (so it may list sold places). Only `changeStatus(…, 'free')`
   without a token removes it from a place, and that also releases the place entirely (held and sold); another
-  free-based status replaces it, and deleting the status removes its marks. For a viewer in `manager` mode, `marks()` feeds
+  free-based status replaces it. Deleting a status that places have (marks included) fails with `409 status-in-use`
+  unless you pass `force=1`, which removes its marks. For a viewer in `manager` mode, `marks()` feeds
   its `marks` option and the status catalog (`request('GET', '/statuses')`) its `statusStyles` (name and color as
   is; text and image icons change shape). The buyer's viewer uses neither.
 - Test environment: `sk_test_…` keys work the same on it; `workspace->createTestEnvironment()`,

@@ -15,7 +15,8 @@
  * confirmarse el pago, reservarías más de lo que has cobrado. Lo que el token retenga de más caduca solo.
  *
  * Si la reserva falla con el pago ya cobrado (una plaza que se soltó y se llevó otro, un token que caducó), no se
- * vende nada: el pedido queda «por devolver» y no se vuelve a reservar (ver alConfirmarElPago).
+ * vende nada: el pedido queda «por devolver» y no se vuelve a reservar (ver alConfirmarElPago). Un pedido reservado
+ * tampoco se vuelve a reservar: un aviso repetido de la pasarela recibe lo que respondió la reserva.
  *
  * Lo usa ejemplo/compra.php. Cópialo a tu proyecto y guarda los pedidos en tu base de datos, no en memoria.
  */
@@ -34,10 +35,11 @@ final class Tienda
     private const SIN_PLAZAS = ['objects-not-available', 'hold-token-expired', 'invalid-hold-token'];
 
     /**
-     * Los pedidos guardados en la caja. En tu tienda, tu base de datos de pedidos. porDevolver: la reserva falló con
-     * el pago ya cobrado (el código del error y sus detalles).
+     * Los pedidos guardados en la caja. En tu tienda, tu base de datos de pedidos. reservado: lo que respondió la
+     * reserva, que ya está hecha; porDevolver: la reserva falló con el pago ya cobrado y sin vender nada (el código
+     * del error y sus detalles).
      *
-     * @var array<string, array{evento: string, holdToken: string, objetos: list<array{key: string, quantity: int}>, importe: float, porDevolver?: array{motivo: string, detalles: mixed}}>
+     * @var array<string, array{evento: string, holdToken: string, objetos: list<array{key: string, quantity: int}>, importe: float, reservado?: array{objects: list<string>, seq: int, retried?: true}, porDevolver?: array{motivo: string, detalles: mixed}}>
      */
     private array $pedidos = [];
 
@@ -52,12 +54,17 @@ final class Tienda
     /**
      * 1. En la caja: lo que retiene ahora el token es lo que se cobra, y se guarda con el pedido. El número de
      * pedido lo pone tu tienda, nunca el comprador (repetir una reserva con un pedido que ya existe responde bien
-     * sin vender nada, así que con el de otra persona vería su compra).
+     * sin vender nada, así que con el de otra persona vería su compra). Volver a la caja con el mismo pedido renueva
+     * la lista mientras no se haya reservado; uno reservado o por devolver ya no vuelve a la caja (usa otro número).
      *
      * @return float El importe que cobras.
      */
     public function alPasarPorCaja(string $pedido, string $evento, string $holdToken): float
     {
+        $anterior = $this->pedidos[$pedido] ?? [];
+        if (isset($anterior['reservado']) || isset($anterior['porDevolver'])) {
+            throw new \RuntimeException("El pedido $pedido ya se cobró: para otra compra, usa otro número de pedido");
+        }
         $objetos = $this->loRetenido($evento, $holdToken);
         if ($objetos === []) {
             throw new \RuntimeException('El token ya no retiene nada: caducó o ya se reservó');
@@ -70,21 +77,30 @@ final class Tienda
 
     /**
      * 2. Con el pago confirmado: la lista guardada en la caja, tal cual, con el número de pedido. Repetirlo (un
-     * reintento, un aviso de la pasarela que llega dos veces) no vende dos veces.
+     * reintento, un aviso de la pasarela que llega dos veces) no vende dos veces: un pedido ya reservado no vuelve a
+     * llamar a book() y devuelve lo que respondió la reserva. Con el mismo pedido, book() no vende dos veces lo que
+     * sigue vendido, pero si después devolviste una parte, volvería a vender lo devuelto (si sigue libre y el token
+     * vive), así que la tienda no la repite.
      *
-     * Si falla, el pago ya está cobrado y no se ha vendido nada, porque la reserva es todo o nada:
+     * Si falla, el pago ya está cobrado y esta reserva no ha vendido nada, porque es todo o nada:
      *
      * - 409 objects-not-available (getDetails() dice qué plaza y por qué: held, booked…), 400 hold-token-expired o
-     *   400 invalid-hold-token: repetirla no lo arregla. El pedido queda «por devolver» (en guardado()) y se relanza
-     *   el error: devuelve el cobro con tu pasarela, o ofrece al comprador otras plazas en un pedido nuevo, y no
-     *   emitas entradas. Un pedido por devolver no se vuelve a reservar: si las plazas quedaran libres después, un
-     *   aviso repetido de la pasarela las vendería con el cobro ya devuelto.
-     * - Sin respuesta tras los reintentos del SDK (network-error, timeout) o un 5xx: no se sabe si se vendió.
-     *   Repítelo más tarde con el mismo pedido, que no vende dos veces, y mira retrieveOrder().
+     *   400 invalid-hold-token: repetirla no lo arregla. Antes de darlo por perdido mira el pedido en Seatsyoo
+     *   (retrieveOrder()): si ya tiene plazas, se vendió en un intento anterior cuya respuesta no llegó (y después
+     *   cambió, con una devolución, por ejemplo); queda reservado con lo que diga el pedido, y cuadra() dirá si es lo
+     *   cobrado. Si no tiene nada, el pedido queda «por devolver» (en guardado()) y se relanza el error: devuelve el
+     *   cobro con tu pasarela, o ofrece al comprador otras plazas en un pedido nuevo, y no emitas entradas. Un pedido
+     *   por devolver no se vuelve a reservar: si las plazas quedaran libres después, un aviso repetido de la pasarela
+     *   las vendería con el cobro ya devuelto.
+     * - Sin respuesta tras los reintentos del SDK (getStatus() 0: network-error, timeout) o un 5xx: no se sabe si se
+     *   vendió. Repítelo más tarde con el mismo pedido, que no vende dos veces.
+     * - Otro 4xx (el evento ya no existe, la clave de producción bloqueada…): no se ha vendido nada, y repetirlo no lo
+     *   arregla mientras no cambie la causa. Revísalo, o devuelve el cobro.
      *
      * Para que el token no caduque mientras se cobra, amplíalo en la caja (holdTokens->extend(), como compra.php).
      *
-     * @return array{objects: list<string>, seq: int, retried?: true} La respuesta de book().
+     * @return array{objects: list<string>, seq: int, retried?: true} La respuesta de book() (la guardada, si ya se
+     *                                                                 había reservado).
      */
     public function alConfirmarElPago(string $pedido): array
     {
@@ -92,15 +108,27 @@ final class Tienda
         if (isset($guardado['porDevolver'])) {
             throw new \RuntimeException("El pedido $pedido no se pudo reservar y está por devolver: no se vuelve a reservar");
         }
+        if (isset($guardado['reservado'])) {
+            return $guardado['reservado'];
+        }
 
         try {
-            return $this->seatsyoo->events->book($guardado['evento'], $guardado['objetos'], holdToken: $guardado['holdToken'], orderId: $pedido);
+            $reserva = $this->seatsyoo->events->book($guardado['evento'], $guardado['objetos'], holdToken: $guardado['holdToken'], orderId: $pedido);
         } catch (SeatsyooException $e) {
-            if (in_array($e->getErrorCode(), self::SIN_PLAZAS, true)) {
-                $this->pedidos[$pedido]['porDevolver'] = ['motivo' => $e->getErrorCode(), 'detalles' => $e->getDetails()];
+            if (!in_array($e->getErrorCode(), self::SIN_PLAZAS, true)) {
+                throw $e;
             }
-            throw $e;
+            $vendido = $this->seatsyoo->events->retrieveOrder($guardado['evento'], $pedido)['objects'];
+            if ($vendido === []) {
+                $this->pedidos[$pedido]['porDevolver'] = ['motivo' => $e->getErrorCode(), 'detalles' => $e->getDetails()];
+                throw $e;
+            }
+            // Vendido antes: como la respuesta de una reserva repetida (seq 0, el número del cambio no se sabe).
+            $reserva = ['objects' => array_column($vendido, 'key'), 'seq' => 0, 'retried' => true];
         }
+        $this->pedidos[$pedido]['reservado'] = $reserva;
+
+        return $reserva;
     }
 
     /**
@@ -119,9 +147,10 @@ final class Tienda
     }
 
     /**
-     * Lo guardado en la caja para un pedido (con porDevolver si la reserva falló con el pago ya cobrado).
+     * Lo guardado en la caja para un pedido (con reservado si la reserva está hecha, y con porDevolver si falló con el
+     * pago ya cobrado y sin vender nada).
      *
-     * @return array{evento: string, holdToken: string, objetos: list<array{key: string, quantity: int}>, importe: float, porDevolver?: array{motivo: string, detalles: mixed}}
+     * @return array{evento: string, holdToken: string, objetos: list<array{key: string, quantity: int}>, importe: float, reservado?: array{objects: list<string>, seq: int, retried?: true}, porDevolver?: array{motivo: string, detalles: mixed}}
      */
     public function guardado(string $pedido): array
     {
