@@ -1,0 +1,137 @@
+# Comprobar. En cada push (ramas y etiquetas) y en cada pull request:
+#
+# - PHP 8.1 a 8.5: la revisión de tests/revisar.php (sintaxis de todos los .php con «php -l», nada que no exista en
+#   PHP 8.1, PSR-4, composer.json y lo que lleva la descarga de Composer) y las pruebas unitarias. Con PHP nightly (la
+#   próxima versión, aún en desarrollo) también, pero solo para avisar: si falla, no tumba la comprobación.
+# - Composer: «composer validate --strict», el autoload PSR-4 que genera Composer y, en una etiqueta, que la etiqueta
+#   (vX.Y.Z) cuadra con Client::VERSION. No hay flujo de publicación: Packagist lee las etiquetas del repositorio.
+# - Integración (opcional): las pruebas contra un servidor de Seatsyoo de verdad, que no está en este repositorio sino
+#   en el del servidor (juanfranavarromoreno-dev/butacas, privado). Solo corre si existe el secreto BUTACAS_TOKEN (un
+#   token de solo lectura de ese repositorio); sin él, el trabajo sale como saltado y la comprobación pasa igual. Los
+#   secretos no se pueden usar en el «if» de un trabajo: lo mira antes un trabajo pequeño («acceso»).
+name: Comprobar
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: comprobar-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+
+jobs:
+  php:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.1", "8.2", "8.3", "8.4", "8.5"]
+        experimental: [false]
+        include:
+          - php: nightly
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # El php.ini de desarrollo: todos los avisos a la vista y las aserciones encendidas.
+          ini-file: development
+          coverage: none
+          tools: none
+      - name: Sintaxis y revisión de todos los .php
+        run: php tests/revisar.php
+      - name: Pruebas unitarias
+        run: php tests/ejecutar.php unitarias
+
+  composer:
+    name: Composer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          ini-file: development
+          coverage: none
+          tools: composer:v2
+      - name: composer validate --strict
+        run: composer validate --strict
+      - name: Autoload de Composer (PSR-4 estricto)
+        run: |
+          composer dump-autoload --optimize --strict-psr
+          php -r 'require "vendor/autoload.php"; new Seatsyoo\Client(secretKey: "sk_prueba", server: "https://seatsyoo.example"); echo "Composer carga el SDK\n";'
+      - name: composer test
+        run: composer test
+      - name: La etiqueta cuadra con Client::VERSION
+        if: github.ref_type == 'tag'
+        run: php tests/version.php "$GITHUB_REF_NAME"
+
+  acceso:
+    name: Acceso al servidor (BUTACAS_TOKEN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      hay: ${{ steps.mirar.outputs.hay }}
+    steps:
+      - id: mirar
+        env:
+          BUTACAS_TOKEN: ${{ secrets.BUTACAS_TOKEN }}
+        run: |
+          if [ -n "$BUTACAS_TOKEN" ]; then
+            echo "hay=si" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay=no" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Integración saltada::Sin el secreto BUTACAS_TOKEN no se prueba contra un servidor de Seatsyoo de verdad (mira «Pruebas» en el README)."
+          fi
+
+  integracion:
+    name: Integración (servidor de Seatsyoo)
+    needs: acceso
+    if: needs.acceso.outputs.hay == 'si'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repositorio del servidor (butacas, rama main)
+        uses: actions/checkout@v4
+        with:
+          repository: juanfranavarromoreno-dev/butacas
+          ref: main
+          path: butacas
+          token: ${{ secrets.BUTACAS_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      # pnpm es el que fija «packageManager» en el package.json del servidor (pnpm@<versión>+sha512.<hex>) y lo trae
+      # corepack, que para si el sha512 no coincide. Como en el CI del servidor.
+      - name: pnpm del servidor, con su hash comprobado (corepack)
+        working-directory: butacas
+        run: |
+          corepack enable pnpm
+          corepack install
+          quiere="$(node -p 'require("./package.json").packageManager.split("+")[0].slice("pnpm@".length)')"
+          [ "$(pnpm --version)" = "$quiere" ] || { echo "::error::pnpm $(pnpm --version) no es el $quiere de package.json"; exit 1; }
+      - name: Dependencias del servidor
+        working-directory: butacas
+        run: pnpm install --frozen-lockfile
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          ini-file: development
+          coverage: none
+          tools: none
+      - name: Unitarias e integración contra el servidor
+        env:
+          BUTACAS_DIR: ${{ github.workspace }}/butacas
+        run: node tests/ejecutar.mjs
