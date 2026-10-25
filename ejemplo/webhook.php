@@ -43,11 +43,13 @@ if (function_exists('fastcgi_finish_request')) {
 }
 
 // Un aviso puede llegar repetido (si se pierde tu respuesta): no proceses dos veces el mismo id. En
-// producción, guárdalos en tu base de datos; y para ordenar los avisos de un evento, usa data.seq.
+// producción, guárdalos en tu base de datos; y para ordenar los avisos de un evento, usa data.seq. Los avisos
+// de tu entorno de pruebas llevan además 'test' => true.
 $data = $aviso['data'];
 switch ($aviso['type']) {
     case 'objects.booked':
-        // Una venta: emite las entradas del pedido $data['orderId'] (con $data['total'] si hay precios).
+        // Una venta: emite las entradas del pedido $data['orderId']. El aviso no trae importes: lo cobrado lo
+        // guardaste tú con el pedido (compáralo con $data['objects'] antes de emitir).
         error_log(sprintf('[%s] Vendido en %s: %s (pedido %s)', $aviso['id'], $data['event']['key'], implode(', ', array_column($data['objects'], 'key')), $data['orderId'] ?? '-'));
         break;
     case 'objects.released':

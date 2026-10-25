@@ -13,6 +13,10 @@ class HoldTokens extends ApiResource
     /**
      * Crea un token que caduca a los holdPeriodSeconds del espacio.
      *
+     * Si se lo pasas al visor, no cuenta para los topes por conexión (IP) del visor (409 hold-limit-ip), que
+     * son para los tokens que crea el propio visor; el de plazas por comprador (maxHoldPerToken, 409
+     * hold-limit) sí.
+     *
      * @return array{token: string, expiresAt: string, expiresInSeconds: int}
      */
     public function create(): array

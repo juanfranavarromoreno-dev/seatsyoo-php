@@ -40,7 +40,7 @@ class Client
     public readonly Charts $charts;
     /** Webhooks: altas, cambios, pruebas y envíos. */
     public readonly Webhooks $webhooks;
-    /** El espacio de la clave. */
+    /** El espacio de la clave y su entorno de pruebas. */
     public readonly Workspace $workspace;
 
     private Requester $http;
@@ -75,9 +75,9 @@ class Client
     }
 
     /**
-     * Cualquier otra ruta de /api/v1 (informes, canales, planos…), con la misma autenticación, errores y
-     * reintentos. Solo se reintentan GET, PUT y DELETE; aquí la respuesta va tal cual, así que un DELETE
-     * repetido tras perder la respuesta del primer intento puede dar 404 aunque ese intento sí borrara.
+     * Cualquier otra ruta de /api/v1 (informes, canales, estados propios…), con la misma autenticación,
+     * errores y reintentos. Solo se reintentan GET, PUT y DELETE; aquí la respuesta va tal cual, así que un
+     * DELETE repetido tras perder la respuesta del primer intento puede dar 404 aunque ese intento sí borrara.
      *
      * Un campo que la API espera como objeto ({"clave": valor}) y está vacío ha de ir como (object) [] o
      * new \stdClass(): un array de PHP vacío sale como lista ([]) y la API responde 400.
