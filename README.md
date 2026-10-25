@@ -17,11 +17,23 @@ pruebas y verifica los webhooks.
 
 ## Instalación
 
+Con Composer:
+
 ```sh
 composer require seatsyoo/seatsyoo-php
 ```
 
-Sin Composer, copia la carpeta del paquete y carga sus clases con `require 'seatsyoo-php/autoload.php';`.
+Las clases se cargan con el `vendor/autoload.php` de tu proyecto, como las de cualquier otro paquete.
+
+Sin Composer, descarga el zip de la versión que quieras (la etiqueta `vX.Y.Z` del repositorio, que lleva solo el
+SDK: `src/`, `autoload.php`, `ejemplo/`, este README y la licencia), copia su carpeta en tu proyecto y carga sus
+clases con su `autoload.php`, que solo registra el cargador de las clases `Seatsyoo\…`:
+
+```php
+require __DIR__ . '/seatsyoo-php/autoload.php';
+```
+
+Las extensiones que usa (json, hash y pcre) vienen siempre con PHP; curl es opcional.
 
 ## Empezar
 
@@ -391,12 +403,66 @@ $seatsyoo = new Client(secretKey: …, server: …, transport: new MiTransporte(
 
 ## Pruebas
 
-Desde el repositorio de Seatsyoo, `pnpm test` en `sdk/php` lanza las pruebas unitarias y las de integración
-contra un servidor de Seatsyoo de verdad levantado en memoria. Solo las unitarias: `php tests/ejecutar.php unitarias`.
+Las unitarias solo necesitan PHP 8.1 o posterior, sin Composer ni nada más:
+
+```sh
+php tests/ejecutar.php unitarias     # o «composer test»
+php tests/revisar.php                # sintaxis de cada .php, nada que no exista en PHP 8.1, PSR-4, composer.json…
+```
+
+Las de integración van contra un servidor de Seatsyoo de verdad, que no está en este repositorio sino en el del
+servidor (privado). `tests/ejecutar.mjs`, con Node 24, levanta uno en memoria con el código de la copia de ese
+repositorio a la que apunte `BUTACAS_DIR`, que ha de tener sus dependencias instaladas (`pnpm install
+--frozen-lockfile` en ella), y lanza las unitarias y las de integración:
+
+```sh
+BUTACAS_DIR=/ruta/a/la/copia/del/servidor node tests/ejecutar.mjs
+BUTACAS_DIR=/ruta/a/la/copia/del/servidor node tests/ejecutar.mjs integracion   # solo las de integración
+```
+
+Sin `BUTACAS_DIR`, las de integración se saltan con un aviso y las demás pasan igual; con `BUTACAS_DIR` mal puesta
+(sin el servidor o sin sus dependencias), falla. Para probar con otro PHP: `PHP_BINARY=/ruta/a/php`.
+
+En GitHub Actions ([`comprobar.yml`](.github/workflows/comprobar.yml)), en cada push y pull request: la revisión
+y las unitarias con PHP 8.1, 8.2, 8.3, 8.4 y 8.5 (y con la nightly, solo para avisar), `composer validate
+--strict` y el autoload de Composer. Las de integración corren solo si el repositorio tiene el secreto
+`BUTACAS_TOKEN`, un token de solo lectura del repositorio del servidor: hacen checkout de su rama `main`, lo
+instalan con pnpm y las lanzan con `BUTACAS_DIR`. Sin el secreto, ese trabajo sale como saltado.
+
+## Publicar una versión
+
+Las versiones siguen [SemVer](https://semver.org/lang/es/) y salen de las etiquetas `vX.Y.Z` del repositorio, que
+Packagist lee solo: `composer.json` no lleva `version` y no hay nada que subir a mano. El código lleva su versión
+en `Client::VERSION` (`src/Client.php`; va en el User-Agent de cada petición), que tiene que cuadrar con la
+etiqueta.
+
+1. Sube `Client::VERSION` (por ejemplo, de `1.0.0` a `1.1.0`): el último número para correcciones, el del medio
+   para lo nuevo que no rompe nada y el primero si algo deja de funcionar como antes.
+2. Pasa la revisión y las pruebas (y las de integración, si tienes el servidor), haz el commit en `main`, súbelo
+   y espera a que «Comprobar» acabe en verde.
+3. Comprueba que la etiqueta cuadra con el código, créala sobre ese commit y súbela:
+
+   ```sh
+   php tests/version.php v1.1.0     # «La etiqueta v1.1.0 cuadra con Client::VERSION (1.1.0)»
+   git tag -a v1.1.0 -m "Versión 1.1.0"
+   git push origin v1.1.0
+   ```
+
+4. Con la etiqueta, «Comprobar» vuelve a pasarlo todo y comprueba otra vez que cuadra con `Client::VERSION`.
+   Packagist la publica en unos minutos (si no, «Update» en la página del paquete). Si quieres, crea también la
+   versión en GitHub (Releases) con lo que trae.
+
+Una etiqueta publicada no se mueve, que quien la haya instalado ya la tiene: si algo salió mal, se saca la
+siguiente versión.
+
+La primera vez, cuando el repositorio sea público: en [packagist.org](https://packagist.org), «Submit» con la
+dirección del repositorio en GitHub, con la cuenta que vaya a mantener el paquete (la primera que publica bajo
+`seatsyoo/` se queda con ese nombre), y enlaza Packagist con GitHub (su integración o su webhook) para que lea
+cada etiqueta en cuanto se sube.
 
 ## Licencia
 
-MIT.
+MIT: [LICENSE](LICENSE).
 
 ---
 
@@ -469,3 +535,11 @@ $event = \Seatsyoo\Webhook::verify($rawBody, $_SERVER['HTTP_SEATSYOO_SIGNATURE']
   tolerance and returns the decoded event, or throws `Seatsyoo\SignatureVerificationException`.
 - Examples in `ejemplo/` (a checkout that books what it charged and flags the order for a refund if booking fails
   after payment, a full purchase and a plain-PHP webhook receiver). License: MIT.
+- Testing: unit tests need PHP only (`php tests/ejecutar.php unitarias` or `composer test`; static checks with
+  `php tests/revisar.php`). Integration tests run against a real Seatsyoo server taken from a checkout of the
+  (private) server repository with its dependencies installed: `BUTACAS_DIR=/path/to/server node tests/ejecutar.mjs`
+  (Node 24). Without `BUTACAS_DIR` they are skipped with a notice. CI runs PHP 8.1 to 8.5 (plus nightly, informative
+  only) and `composer validate --strict`; the integration job runs only when the `BUTACAS_TOKEN` secret exists.
+- Releasing: bump `Client::VERSION` in `src/Client.php`, check it with `php tests/version.php vX.Y.Z`, then push an
+  annotated `vX.Y.Z` tag; Packagist picks it up (there is no `version` in `composer.json`). CI checks the tag
+  against `Client::VERSION` again.
