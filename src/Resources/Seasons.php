@@ -265,6 +265,7 @@ class Seasons extends ApiResource
      * @param list<string>|null $categories
      * @param list<string>|null $channelKeys
      * @param list<string>|null $events
+     * @param list<string>|null $sections Solo en estos sectores (nombre de la sección o su id en el plano).
      *
      * @return array{objects: list<string>, seq: int, contiguous: bool, events: int}
      */
@@ -277,11 +278,13 @@ class Seasons extends ApiResource
         ?string $holdToken = null,
         ?string $orderId = null,
         ?array $channelKeys = null,
-        ?array $events = null
+        ?array $events = null,
+        ?array $sections = null
     ): array {
         return $this->http->json('POST', $this->action($season, 'best-available'), self::fields([
             'number' => $number,
             'categories' => $categories,
+            'sections' => $sections,
             'accessible' => $accessible,
             'allowSplit' => $allowSplit,
             'holdToken' => $holdToken,

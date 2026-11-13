@@ -133,6 +133,8 @@ Las mejores butacas libres juntas, retenidas con un token o reservadas directame
 
 ```php
 $r = $seatsyoo->events->bestAvailable('hamlet-2026-11-20', 2, categories: ['platea'], holdToken: $holdToken);
+// Solo en un sector (su nombre o el id de la sección en el plano), como hace el visor con un sector abierto.
+$r = $seatsyoo->events->bestAvailable('final-copa', 2, sections: ['Tribuna Este'], holdToken: $holdToken);
 // $r['objects'] = ['Platea-F-7', 'Platea-F-8'], $r['contiguous'] = true
 ```
 
@@ -341,7 +343,7 @@ $seatsyoo->events->book($evento, $objetos, holdToken: null, orderId: null, chann
 $seatsyoo->events->release($evento, $objetos, holdToken: null)
 $seatsyoo->events->refund($evento, $orderId, objects: null)
 $seatsyoo->events->changeStatus($evento, $objetos, $estado, holdToken: null, orderId: null, expected: null, channelKeys: null)
-$seatsyoo->events->bestAvailable($evento, $numero, categories: null, accessible: null, allowSplit: null, holdToken: null, orderId: null, channelKeys: null)
+$seatsyoo->events->bestAvailable($evento, $numero, categories: null, accessible: null, allowSplit: null, holdToken: null, orderId: null, channelKeys: null, sections: null)
 $seatsyoo->events->statuses($evento, holdToken: null)
 $seatsyoo->events->retrieveObject($evento, $objeto)
 $seatsyoo->events->retrieveOrder($evento, $orderId)

@@ -118,13 +118,17 @@ prueba('parámetros de la dirección: codificados y sin los que no se indican', 
 });
 
 prueba('el cuerpo va en JSON, sin los campos no indicados, y los objetos como lista', function (): void {
-    $e = new Entorno([json(200, RESPUESTA), json(200, RESPUESTA), json(200, RESPUESTA)]);
+    $e = new Entorno(array_fill(0, 5, json(200, RESPUESTA)));
     $e->events->book('hamlet', [3 => 'Platea-C-1', 7 => ['key' => 'Pista', 'quantity' => 3]], holdToken: 'hold_1', orderId: 'pedido-2001');
     igual('{"objects":["Platea-C-1",{"key":"Pista","quantity":3}],"holdToken":"hold_1","orderId":"pedido-2001"}', $e->transporte->ultima()['body']);
     $e->events->hold('hamlet', ['Platea-C-1'], 'hold_1', channelKeys: ['taquilla'], ignoreChannels: false);
     igual('{"objects":["Platea-C-1"],"holdToken":"hold_1","channelKeys":["taquilla"],"ignoreChannels":false}', $e->transporte->ultima()['body']);
     $e->events->bestAvailable('hamlet', 2, categories: ['platea'], accessible: true, allowSplit: true, holdToken: 'hold_1');
     igual('{"number":2,"categories":["platea"],"accessible":true,"allowSplit":true,"holdToken":"hold_1"}', $e->transporte->ultima()['body']);
+    $e->events->bestAvailable('final', 2, holdToken: 'hold_1', sections: ['Tribuna Este', 'sec-12']);
+    igual('{"number":2,"sections":["Tribuna Este","sec-12"],"holdToken":"hold_1"}', $e->transporte->ultima()['body']);
+    $e->seasons->bestAvailable('abono', 3, events: ['e1'], sections: ['Fondo Norte']);
+    igual('{"number":3,"sections":["Fondo Norte"],"events":["e1"]}', $e->transporte->ultima()['body']);
 });
 
 prueba('devolver: pedido y, si es parcial, sus objetos', function (): void {

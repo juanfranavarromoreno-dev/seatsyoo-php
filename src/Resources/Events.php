@@ -242,6 +242,8 @@ class Events extends ApiResource
      * @param bool|null         $accessible true: solo butacas accesibles.
      * @param bool|null         $allowSplit true: si no hay tantas juntas, las más cercanas aunque estén separadas.
      * @param list<string>|null $channelKeys
+     * @param list<string>|null $sections   Solo en estos sectores: el nombre de la sección o su id en el plano, hasta
+     *                                      100 (como hace el visor con un sector abierto). Sin él, en todo el recinto.
      *
      * @return array{objects: list<string>, seq: int, contiguous: bool}
      */
@@ -253,11 +255,13 @@ class Events extends ApiResource
         ?bool $allowSplit = null,
         ?string $holdToken = null,
         ?string $orderId = null,
-        ?array $channelKeys = null
+        ?array $channelKeys = null,
+        ?array $sections = null
     ): array {
         return $this->http->json('POST', $this->action($event, 'best-available'), self::fields([
             'number' => $number,
             'categories' => $categories,
+            'sections' => $sections,
             'accessible' => $accessible,
             'allowSplit' => $allowSplit,
             'holdToken' => $holdToken,
