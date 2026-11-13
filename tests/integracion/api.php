@@ -265,6 +265,17 @@ prueba('mejor disponible: retener con token y reservar con pedido', function ():
     igual(['booked', 'booked', 'booked'], array_column($pedido['objects'], 'status'));
 });
 
+prueba('mejor disponible solo en un sector (sections)', function (): void {
+    // El teatro de ejemplo no dibuja secciones: vale el nombre de sección de las filas.
+    $token = Api::$seatsyoo->holdTokens->create()['token'];
+    $r = Api::$seatsyoo->events->bestAvailable(Api::$evento, 2, holdToken: $token, sections: ['Anfiteatro']);
+    igual(2, count($r['objects']));
+    foreach ($r['objects'] as $clave) {
+        igual(true, str_starts_with($clave, 'Anfiteatro-'), $clave);
+    }
+    Api::$seatsyoo->events->release(Api::$evento, $r['objects'], holdToken: $token);
+});
+
 prueba('mejor disponible imposible o fuera de margen', function (): void {
     $error = lanza(SeatsyooException::class, fn () => Api::$seatsyoo->events->bestAvailable(Api::$evento, 100, categories: ['preferente']));
     igual(409, $error->getStatus());
